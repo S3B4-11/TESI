@@ -1,0 +1,226 @@
+{
+  "citations": {
+    "schoenfeld2010": "Schoenfeld, B. J. (2010). Squatting kinematics and kinetics and their application to exercise performance. Journal of Strength and Conditioning Research, 24(12), 3497–3506. https://doi.org/10.1519/JSC.0b013e3181bac2d7",
+    "hewett2005": "Hewett, T. E., Myer, G. D., Ford, K. R., Heidt, R. S., Colosimo, A. J., McLean, S. G., van den Bogert, A. J., Paterno, M. V., & Succop, P. (2005). Biomechanical measures of neuromuscular control and valgus loading of the knee predict anterior cruciate ligament injury risk in female athletes: A prospective study. The American Journal of Sports Medicine, 33(4), 492–501. https://doi.org/10.1177/0363546504269591",
+    "callaghan_mcgill2001": "Callaghan, J. P., & McGill, S. M. (2001). Intervertebral disc herniation: Studies on a porcine model exposed to highly repetitive flexion/extension motion with compressive force. Clinical Biomechanics, 16(1), 28–37. https://doi.org/10.1016/S0268-0033(00)00063-2",
+    "ludewig_cook2000": "Ludewig, P. M., & Cook, T. M. (2000). Alterations in shoulder kinematics and associated muscle activity in people with symptoms of shoulder impingement. Physical Therapy, 80(3), 276–291. https://doi.org/10.1093/ptj/80.3.276",
+    "cook2006": "Cook, G., Burton, L., & Hoogenboom, B. (2006). Pre-participation screening: The use of fundamental movements as an assessment of function – Part 1. North American Journal of Sports Physical Therapy, 1(2), 62–72."
+  },
+  "taxonomy": {
+    "elbow_flexion": {
+      "0": "correcto",
+      "1": "rango_incompleto",
+      "2": "compensacion_de_tronco"
+    },
+    "inline_lunge": {
+      "0": "correcto",
+      "1": "poca_profundidad",
+      "2": "valgo_de_rodilla",
+      "3": "inclinacion_de_tronco"
+    },
+    "shoulder_abduction": {
+      "0": "correcto",
+      "1": "rango_incompleto",
+      "2": "compensacion_de_tronco",
+      "3": "elevacion_del_hombro"
+    },
+    "squat": {
+      "0": "correcto",
+      "1": "poca_profundidad",
+      "2": "valgo_de_rodilla",
+      "3": "inclinacion_lumbar_excesiva"
+    }
+  },
+  "labels": {
+    "elbow_flexion": "Flexión de codo (curl de bíceps)",
+    "inline_lunge": "Zancada / estocada",
+    "shoulder_abduction": "Abducción de hombro (elevación lateral)",
+    "squat": "Sentadilla"
+  },
+  "focus_landmarks": {
+    "elbow_flexion": {
+      "0": [],
+      "1": [
+        12,
+        14,
+        16,
+        11,
+        13,
+        15
+      ],
+      "2": [
+        11,
+        12,
+        23,
+        24
+      ]
+    },
+    "inline_lunge": {
+      "0": [],
+      "1": [
+        23,
+        24,
+        25,
+        26,
+        27,
+        28
+      ],
+      "2": [
+        25,
+        26,
+        27,
+        28
+      ],
+      "3": [
+        11,
+        12,
+        23,
+        24
+      ]
+    },
+    "shoulder_abduction": {
+      "0": [],
+      "1": [
+        12,
+        14,
+        16,
+        11,
+        13,
+        15
+      ],
+      "2": [
+        11,
+        12,
+        23,
+        24
+      ],
+      "3": [
+        11,
+        12
+      ]
+    },
+    "squat": {
+      "0": [],
+      "1": [
+        23,
+        24,
+        25,
+        26,
+        27,
+        28
+      ],
+      "2": [
+        25,
+        26,
+        27,
+        28
+      ],
+      "3": [
+        11,
+        12,
+        23,
+        24
+      ]
+    }
+  },
+  "knowledge_base": {
+    "elbow_flexion": {
+      "0": {
+        "zona_biomecanica": "—",
+        "instruccion_correctiva": "Mantén el codo fijo junto al torso y controla tanto la fase de subida como la de bajada.",
+        "fundamento_medico": "Aislar el movimiento en el codo maximiza la tensión sobre el bíceps sin transferir carga compensatoria a la columna lumbar, y trabajar el rango completo distribuye el estímulo a lo largo de toda la longitud muscular (Schoenfeld, 2010).",
+        "citation_key": "schoenfeld2010"
+      },
+      "1": {
+        "zona_biomecanica": "Codo — rango de flexo-extensión",
+        "instruccion_correctiva": "Extiende completamente el codo en la fase baja y flexiona hasta el rango completo en la alta, sin cortar el recorrido; baja la carga si no puedes completarlo.",
+        "fundamento_medico": "El rango incompleto reduce el estímulo en los extremos de la longitud muscular del bíceps, donde se han reportado adaptaciones de fuerza específicas al rango entrenado (Schoenfeld, 2010).",
+        "citation_key": "schoenfeld2010"
+      },
+      "2": {
+        "zona_biomecanica": "Columna lumbar y hombro — balanceo compensatorio del torso",
+        "instruccion_correctiva": "Reduce la carga y evita impulsar el peso con la espalda: el único segmento que debe moverse es el antebrazo, con el codo fijo junto al tronco.",
+        "fundamento_medico": "El balanceo del tronco para completar la repetición genera flexo-extensión repetida de la columna bajo carga añadida en el momento del impulso, un patrón de carga descrito como factor de riesgo para el disco intervertebral (Callaghan & McGill, 2001).",
+        "citation_key": "callaghan_mcgill2001"
+      }
+    },
+    "inline_lunge": {
+      "0": {
+        "zona_biomecanica": "—",
+        "instruccion_correctiva": "Mantén el patrón: descenso controlado, rodilla alineada sobre el pie y tronco erguido sobre una base de apoyo estrecha.",
+        "fundamento_medico": "La zancada en línea evalúa el control del tronco y de la cadera en una base de sustentación reducida, uno de los patrones fundamentales del cribado de movimiento funcional; ejecutarla con rodilla alineada y tronco estable refleja un control neuromuscular adecuado (Cook et al., 2006).",
+        "citation_key": "cook2006"
+      },
+      "1": {
+        "zona_biomecanica": "Cadera y rodilla — profundidad del descenso en la zancada",
+        "instruccion_correctiva": "Desciende hasta que la rodilla trasera se aproxime al suelo y la rodilla delantera alcance unos 90°, sin perder el equilibrio; acorta el paso si no logras el recorrido.",
+        "fundamento_medico": "Un descenso incompleto reduce la demanda de control excéntrico de cadera y rodilla que este patrón está destinado a entrenar y evaluar, y limita el desarrollo de fuerza en el rango articular donde el patrón es más exigente (Cook et al., 2006).",
+        "citation_key": "cook2006"
+      },
+      "2": {
+        "zona_biomecanica": "Rodilla delantera — plano frontal (colapso medial / valgo dinámico)",
+        "instruccion_correctiva": "Mantén la rodilla delantera alineada sobre la punta del pie durante todo el descenso; empuja la rodilla ligeramente hacia afuera y activa el glúteo medio.",
+        "fundamento_medico": "El colapso medial de la rodilla en apoyo unipodal incrementa la carga de tensión sobre el ligamento cruzado anterior; un mayor momento de valgo de rodilla predijo de forma prospectiva el riesgo de lesión del LCA en atletas (Hewett et al., 2005).",
+        "citation_key": "hewett2005"
+      },
+      "3": {
+        "zona_biomecanica": "Tronco — pérdida de la vertical durante la zancada",
+        "instruccion_correctiva": "Mantén el torso erguido y perpendicular al suelo, sin inclinarte hacia adelante ni lateralmente; si pierdes la vertical, reduce la profundidad hasta recuperar el control.",
+        "fundamento_medico": "La inclinación del tronco en este patrón indica que la estabilidad se está compensando con la columna en vez de con la cadera; el control del tronco sobre una base estrecha es precisamente lo que evalúa este movimiento fundamental (Cook et al., 2006).",
+        "citation_key": "cook2006"
+      }
+    },
+    "shoulder_abduction": {
+      "0": {
+        "zona_biomecanica": "—",
+        "instruccion_correctiva": "Mantén el patrón: elevación progresiva del brazo con el tronco quieto y el hombro lejos de la oreja.",
+        "fundamento_medico": "Una elevación con el tronco estable y sin ascenso prematuro del hombro refleja un ritmo escapulohumeral adecuado, con la escápula rotando hacia arriba de forma coordinada en vez de compensar con el trapecio superior (Ludewig & Cook, 2000).",
+        "citation_key": "ludewig_cook2000"
+      },
+      "1": {
+        "zona_biomecanica": "Hombro — rango de abducción alcanzado",
+        "instruccion_correctiva": "Eleva el brazo por el plano lateral hasta el rango que puedas controlar sin dolor ni compensaciones; progresa de forma gradual en vez de forzar el final del recorrido.",
+        "fundamento_medico": "Un rango de elevación limitado suele acompañar a las alteraciones del ritmo escapulohumeral descritas en personas con síntomas de pinzamiento subacromial, donde la escápula rota menos hacia arriba durante la elevación del brazo (Ludewig & Cook, 2000).",
+        "citation_key": "ludewig_cook2000"
+      },
+      "2": {
+        "zona_biomecanica": "Tronco — inclinación lateral compensatoria",
+        "instruccion_correctiva": "Mantén el tronco vertical y ambos pies firmes: el brazo debe subir sin que el cuerpo se incline hacia el lado contrario para \"ganar\" altura. Reduce la carga si aparece la compensación.",
+        "fundamento_medico": "Inclinar el tronco desplaza el trabajo fuera del complejo del hombro y enmascara un déficit real de elevación, además de cargar asimétricamente la columna con flexiones laterales repetidas bajo carga (Callaghan & McGill, 2001).",
+        "citation_key": "callaghan_mcgill2001"
+      },
+      "3": {
+        "zona_biomecanica": "Cintura escapular — elevación del hombro hacia la oreja (trapecio superior)",
+        "instruccion_correctiva": "Mantén el hombro deprimido y la escápula estable mientras subes el brazo: piensa en alejar el hombro de la oreja durante todo el recorrido, no en encogerlo.",
+        "fundamento_medico": "La elevación prematura del hombro refleja una activación aumentada del trapecio superior con menor participación del serrato anterior, exactamente el patrón observado en personas con síntomas de pinzamiento subacromial, junto con una inclinación anterior aumentada de la escápula (Ludewig & Cook, 2000).",
+        "citation_key": "ludewig_cook2000"
+      }
+    },
+    "squat": {
+      "0": {
+        "zona_biomecanica": "—",
+        "instruccion_correctiva": "Mantén el mismo patrón de movimiento: cadera y rodilla trabajando en conjunto, tronco estable y control en todo el recorrido.",
+        "fundamento_medico": "Un patrón de sentadilla con rango completo, rodillas alineadas sobre los pies y columna neutra distribuye la carga de forma fisiológica entre cadera, rodilla y tobillo, minimizando la concentración de estrés articular (Schoenfeld, 2010).",
+        "citation_key": "schoenfeld2010"
+      },
+      "1": {
+        "zona_biomecanica": "Cadera y rodilla — rango de flexión (profundidad de la sentadilla)",
+        "instruccion_correctiva": "Desciende hasta que la cadera quede, al menos, a la altura de la rodilla, manteniendo los talones apoyados y el torso estable. Si te resulta difícil, reduce la carga antes que la profundidad.",
+        "fundamento_medico": "Un rango de movimiento insuficiente concentra la carga en un arco articular reducido y limita la activación glútea; completar el recorrido distribuye el estrés mecánico de forma más homogénea a lo largo del rango articular disponible de cadera y rodilla (Schoenfeld, 2010).",
+        "citation_key": "schoenfeld2010"
+      },
+      "2": {
+        "zona_biomecanica": "Rodilla — plano frontal (colapso medial / valgo dinámico de rodilla)",
+        "instruccion_correctiva": "Empuja activamente las rodillas hacia afuera, manteniéndolas alineadas sobre la punta de los pies durante todo el descenso y el ascenso; activa conscientemente el glúteo medio.",
+        "fundamento_medico": "El colapso medial de la rodilla (valgo dinámico) incrementa la carga de tensión sobre el ligamento cruzado anterior (LCA). En un estudio prospectivo con atletas, un mayor momento de valgo de rodilla predijo estadísticamente el riesgo de lesión del LCA (Hewett et al., 2005).",
+        "citation_key": "hewett2005"
+      },
+      "3": {
+        "zona_biomecanica": "Columna lumbar — flexión excesiva del tronco durante el descenso",
+        "instruccion_correctiva": "Mantén el pecho erguido y la curvatura lumbar neutra en todo el recorrido; si no logras conservarla, reduce la profundidad o la carga hasta recuperar el control postural.",
+        "fundamento_medico": "La flexión lumbar repetida bajo carga incrementa el estrés de cizallamiento sobre los discos intervertebrales. En un modelo experimental de columna expuesto a flexo-extensión repetitiva bajo carga compresiva, la herniación discal se asoció más a la repetición de la flexión que a la compresión axial por sí sola (Callaghan & McGill, 2001).",
+        "citation_key": "callaghan_mcgill2001"
+      }
+    }
+  }
+}
