@@ -1,0 +1,49 @@
+{
+  "exercise": "shoulder_abduction",
+  "exercise_label": "Abducción de hombro (elevación lateral)",
+  "classes": {
+    "0": "correcto",
+    "1": "rango_incompleto",
+    "2": "compensacion_de_tronco",
+    "3": "elevacion_del_hombro"
+  },
+  "architecture": "lstm",
+  "en_cascada": true,
+  "sequence_length": 64,
+  "feature_size": 133,
+  "active_landmarks": [
+    0,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    31,
+    32
+  ],
+  "entrenado_con_datos_reales": true,
+  "fuentes": [
+    "UI-PRMD A07 (.skeleton)",
+    "IRDS gestos 4/5"
+  ],
+  "metricas_validacion": {
+    "deteccion_accuracy": 0.7147,
+    "deteccion_sensibilidad": 0.8722,
+    "tipificacion_f1_macro": 0.3662,
+    "sujetos": 35,
+    "muestras": 645,
+    "accuracy_balanceada": 0.773,
+    "umbral_deteccion": 0.16
+  }
+}

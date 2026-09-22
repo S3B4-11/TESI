@@ -1,0 +1,44 @@
+{
+  "exercise": "inline_lunge",
+  "exercise_label": "Zancada / estocada",
+  "classes": {
+    "0": "correcto",
+    "1": "poca_profundidad",
+    "2": "valgo_de_rodilla",
+    "3": "inclinacion_de_tronco"
+  },
+  "architecture": "lstm",
+  "en_cascada": true,
+  "sequence_length": 64,
+  "feature_size": 133,
+  "active_landmarks": [
+    0,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    31,
+    32
+  ],
+  "entrenado_con_datos_reales": true,
+  "fuentes": [
+    "UI-PRMD A03 (.skeleton)"
+  ],
+  "metricas_validacion": {
+    "deteccion_accuracy": 0.6863,
+    "deteccion_sensibilidad": 0.6275,
+    "tipificacion_f1_macro": 0.371,
+    "sujetos": 6,
+    "muestras": 102,
+    "accuracy_balanceada": 0.6863,
+    "umbral_deteccion": 0.462
+  }
+}
