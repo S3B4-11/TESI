@@ -1,0 +1,8 @@
+# Generado por el notebook. Versiones en rango a propósito: ver comentario
+# en la Sección 3.2.a. Entrenado con TensorFlow 2.20.0, Keras 3.13.2, MediaPipe 0.10.35.
+streamlit>=1.36
+tensorflow-cpu>=2.16
+mediapipe>=0.10.14
+opencv-python-headless>=4.9
+requests
+# Para Hugging Face Space (interfaz Gradio) añade: gradio>=4.44,<6
