@@ -1,0 +1,47 @@
+{
+  "exercise": "elbow_flexion",
+  "exercise_label": "Flexión de codo (curl de bíceps)",
+  "classes": {
+    "0": "correcto",
+    "1": "rango_incompleto",
+    "2": "compensacion_de_tronco"
+  },
+  "architecture": "lstm",
+  "en_cascada": true,
+  "sequence_length": 64,
+  "feature_size": 133,
+  "active_landmarks": [
+    0,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    31,
+    32
+  ],
+  "entrenado_con_datos_reales": true,
+  "fuentes": [
+    "IRDS gestos 0/1"
+  ],
+  "metricas_validacion": {
+    "deteccion_accuracy": 0.7486,
+    "deteccion_sensibilidad": 0.6556,
+    "tipificacion_f1_macro": 0.3796,
+    "sujetos": 28,
+    "muestras": 537,
+    "accuracy_balanceada": 0.7114,
+    "umbral_deteccion": 0.233
+  }
+}
