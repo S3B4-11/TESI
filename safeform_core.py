@@ -446,9 +446,15 @@ class CascadaInferencia:
         return np.where(p_error >= self.umbral, subtipo, 0).astype(int)
 
 
+def raiz_de_modelos():
+    """Acepta tanto modelos/<ejercicio>/ como <ejercicio>/ en la raiz."""
+    candidata = BASE / 'modelos'
+    return candidata if candidata.is_dir() else BASE
+
+
 def load_bundle(exercise):
     if exercise not in _bundles:
-        carpeta = BASE / 'modelos' / exercise
+        carpeta = raiz_de_modelos() / exercise
         mapa = json.loads((carpeta / 'class_map_multiclase.json').read_text(encoding='utf-8'))
         if mapa.get('en_cascada'):
             ruta_umbral = carpeta / 'umbral_deteccion.json'
@@ -471,7 +477,8 @@ def load_bundle(exercise):
 
 
 def ejercicios_disponibles():
-    return sorted(p.name for p in (BASE / 'modelos').iterdir() if p.is_dir())
+    return sorted(p.name for p in raiz_de_modelos().iterdir()
+                  if p.is_dir() and (p / 'class_map_multiclase.json').exists())
 
 
 def etiqueta_es(exercise):
