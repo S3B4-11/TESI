@@ -91,7 +91,14 @@ with derecha:
         st.stop()
 
     correcto = r['es_correcto']
-    titulo_estado = 'Ejecución correcta' if correcto else 'Detectado: ' + r['clase_nombre']
+    if correcto:
+        titulo_estado = 'Ejecución correcta'
+    elif r.get('sin_tipificar'):
+        # Hay una desviación, pero el subtipo no alcanza el rendimiento mínimo
+        # para nombrarse. Decirlo así es más útil que dar un nombre poco fiable.
+        titulo_estado = 'Desviación técnica detectada'
+    else:
+        titulo_estado = 'Detectado: ' + r['clase_nombre']
     st.markdown(
         '<div class="bloque-estado ' + ('ok' if correcto else 'malo') + '">'
         '<div class="etiqueta">' + r['ejercicio_label'] + '</div>'
