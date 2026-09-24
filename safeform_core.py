@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import keras
@@ -170,6 +171,14 @@ LANDMARKS_REQUERIDOS = {
 }
 VISIBILIDAD_MINIMA = 0.5
 
+# Recall minimo, medido en la validacion por sujeto, para que la app se atreva a
+# NOMBRAR un subtipo de error. Bajo este valor dice que hay una desviacion pero
+# no cual: en sentadilla, 'valgo_de_rodilla' tiene precision 0.26 -- cuando dice
+# "valgo", 3 de cada 4 veces no lo es. Nombrarlo igual seria presentar como
+# diagnostico algo que el sistema acierta menos de la mitad de las veces, y el
+# usuario no tiene forma de saber cual de las dos veces le toco.
+RECALL_MINIMO_PARA_TIPIFICAR = 0.40
+
 
 def visibilidad_de(result):
     """Confianza por landmark que reporta MediaPipe, SIN tocar. No entra al
@@ -217,6 +226,199 @@ def interpolate_missing(sequence):
     return salida, float(detected.mean())
 
 
+# ---------- Canonicalizacion de punto de vista (Seccion 1.4.5) ----------
+# INYECTADO desde el notebook: es la misma cadena CODIGO_CANONICALIZACION
+# con la que se construyo cada tensor de entrenamiento.
+CANONICALIZAR_VISTA = True
+CORREGIR_INCLINACION_CAMARA = True
+MAX_CORRECCION_INCLINACION_GRADOS = 20.0
+LANDMARKS_SUELO = [27, 28, 29, 30, 31, 32]
+VISIBILIDAD_SUELO_MINIMA = 0.5
+PLANITUD_MINIMA = 0.15
+RESIDUO_MAXIMO_PLANO = 0.35
+
+def _coords_de(secuencia: np.ndarray) -> np.ndarray:
+    """(T,133) -> (T,33,3) con las coordenadas."""
+    return np.asarray(secuencia, dtype=np.float32)[:, :NUM_LANDMARKS * 3].reshape(
+        -1, NUM_LANDMARKS, 3)
+
+
+def _visibilidad_de_secuencia(secuencia: np.ndarray) -> np.ndarray:
+    """(T,133) -> (T,33) con el canal de visibilidad."""
+    return np.asarray(secuencia, dtype=np.float32)[:, NUM_LANDMARKS * 3:NUM_LANDMARKS * 4]
+
+
+def _con_coords(secuencia: np.ndarray, coords: np.ndarray) -> np.ndarray:
+    """Devuelve una copia de la secuencia con otras coordenadas. Los landmarks
+    con visibilidad 0 se vuelven a poner en cero EXACTO: son huecos, no datos, y
+    dejarles un 1e-9 de error numérico rompería active_landmarks_from_training
+    y el control de saturación de dominio de la app."""
+    salida = np.asarray(secuencia, dtype=np.float32).copy()
+    visibilidad = _visibilidad_de_secuencia(salida)
+    coords = np.asarray(coords, dtype=np.float32).copy()
+    coords[visibilidad <= 0.0] = 0.0
+    salida[:, :NUM_LANDMARKS * 3] = coords.reshape(len(coords), -1)
+    return salida
+
+
+def aplicar_rotacion(coords: np.ndarray, rotacion: np.ndarray) -> np.ndarray:
+    """Rota (T,33,3) por una matriz 3x3 (vectores fila: c' = R c)."""
+    return np.asarray(coords, dtype=np.float32) @ np.asarray(rotacion, dtype=np.float32).T
+
+
+def matriz_rotacion_vertical(theta: float) -> np.ndarray:
+    """Rotación de -theta alrededor del eje vertical (Y), que lleva un vector
+    horizontal de ángulo theta sobre +X. Y queda intacto, así que la inclinación
+    respecto a la vertical se conserva."""
+    c, s = float(np.cos(theta)), float(np.sin(theta))
+    return np.array([[c, 0.0, s],
+                     [0.0, 1.0, 0.0],
+                     [-s, 0.0, c]], dtype=np.float32)
+
+
+def rotacion_entre_vectores(origen: np.ndarray, destino: np.ndarray) -> np.ndarray:
+    """Rotación mínima (Rodrigues) que lleva `origen` sobre `destino`. Mínima
+    importa: cualquier otra añadiría un giro extra alrededor del eje común, y
+    ese giro sí cambiaría el tensor sin ninguna justificación anatómica."""
+    a = np.asarray(origen, dtype=np.float64)
+    b = np.asarray(destino, dtype=np.float64)
+    a = a / max(float(np.linalg.norm(a)), 1e-9)
+    b = b / max(float(np.linalg.norm(b)), 1e-9)
+    v = np.cross(a, b)
+    seno = float(np.linalg.norm(v))
+    coseno = float(np.dot(a, b))
+    if seno < 1e-8:
+        if coseno > 0:
+            return np.eye(3, dtype=np.float32)
+        # Antiparalelos: media vuelta alrededor de cualquier eje perpendicular.
+        auxiliar = np.array([1.0, 0.0, 0.0]) if abs(a[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        eje = np.cross(a, auxiliar)
+        eje = eje / max(float(np.linalg.norm(eje)), 1e-9)
+        V = np.array([[0.0, -eje[2], eje[1]], [eje[2], 0.0, -eje[0]], [-eje[1], eje[0], 0.0]])
+        return (np.eye(3) + 2.0 * V @ V).astype(np.float32)
+    V = np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]])
+    return (np.eye(3) + V + V @ V * ((1.0 - coseno) / (seno ** 2))).astype(np.float32)
+
+
+def estimar_normal_del_suelo(coords: np.ndarray, visibilidad: np.ndarray):
+    """Ajusta un plano a los landmarks del pie (que están sobre el suelo) y
+    devuelve (normal_hacia_abajo, diagnóstico). La normal es la vertical REAL:
+    comparada con el eje Y del sensor, da la inclinación de la cámara.
+    Devuelve (None, motivo) si la geometría no permite un ajuste confiable."""
+    visibilidad_media = np.asarray(visibilidad, dtype=np.float32).mean(axis=0)
+    presentes = [i for i in LANDMARKS_SUELO if visibilidad_media[i] >= VISIBILIDAD_SUELO_MINIMA]
+    if len(presentes) < 3:
+        return None, {'motivo': f'solo {len(presentes)} landmarks de pie visibles (hacen falta 3)'}
+
+    nube = np.asarray(coords, dtype=np.float64)[:, presentes, :].reshape(-1, 3)
+    nube = nube[np.isfinite(nube).all(axis=1)]
+    if len(nube) < 6:
+        return None, {'motivo': 'muy pocos puntos de pie utilizables'}
+
+    centrada = nube - nube.mean(axis=0)
+    try:
+        _u, sigmas, vt = np.linalg.svd(centrada, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return None, {'motivo': 'el ajuste del plano no convergió'}
+    if sigmas[0] <= 1e-9:
+        return None, {'motivo': 'los puntos de pie colapsan en uno solo'}
+
+    planitud = float(sigmas[1] / sigmas[0])
+    residuo = float(sigmas[2] / max(sigmas[1], 1e-9))
+    if planitud < PLANITUD_MINIMA:
+        return None, {'motivo': f'los pies son casi colineales (planitud {planitud:.2f})',
+                      'planitud': planitud}
+    if residuo > RESIDUO_MAXIMO_PLANO:
+        return None, {'motivo': f'los pies no forman un plano (residuo {residuo:.2f})',
+                      'planitud': planitud, 'residuo': residuo}
+
+    normal = vt[2]
+    normal = normal / max(float(np.linalg.norm(normal)), 1e-9)
+    # Orientada hacia ABAJO, igual que +Y en la convención MediaPipe.
+    if normal[1] < 0:
+        normal = -normal
+    inclinacion = float(np.degrees(np.arccos(np.clip(normal[1], -1.0, 1.0))))
+    if inclinacion > MAX_CORRECCION_INCLINACION_GRADOS:
+        return None, {'motivo': f'inclinación estimada {inclinacion:.0f}° sobre el tope de '
+                                f'{MAX_CORRECCION_INCLINACION_GRADOS:.0f}°: ajuste poco creíble',
+                      'inclinacion_grados': inclinacion}
+    return normal.astype(np.float32), {'planitud': planitud, 'residuo': residuo,
+                                        'inclinacion_grados': inclinacion}
+
+
+def estimar_azimut(coords: np.ndarray, visibilidad: np.ndarray):
+    """Ángulo (radianes) de la línea de caderas en el plano horizontal, y su
+    confianza. Se usa la cadera y no el hombro porque el tronco rota durante el
+    gesto y la pelvis no: la pelvis define la orientación de la PERSONA, el
+    hombro la del tronco en ese instante."""
+    coords = np.asarray(coords, dtype=np.float64)
+    visibilidad = np.asarray(visibilidad, dtype=np.float32)
+
+    for izquierdo, derecho in ((23, 24), (11, 12)):
+        utiles = (visibilidad[:, izquierdo] > 0) & (visibilidad[:, derecho] > 0)
+        if not utiles.any():
+            continue
+        linea = (coords[utiles, izquierdo, :] - coords[utiles, derecho, :]).mean(axis=0)
+        horizontal = float(np.hypot(linea[0], linea[2]))
+        norma = float(np.linalg.norm(linea))
+        if horizontal < 1e-6 or norma < 1e-6:
+            continue
+        # La confianza cae si el segmento apunta sobre todo hacia arriba/abajo
+        # (cámara muy picada) o si su largo es anómalo respecto al torso, que es
+        # la escala con la que ya se normalizó la secuencia.
+        confianza = float(horizontal / norma) * float(min(1.0, norma / 0.25))
+        return float(np.arctan2(linea[2], linea[0])), confianza
+    return 0.0, 0.0
+
+
+def canonicalizar_vista(secuencia: np.ndarray, corregir_inclinacion: Optional[bool] = None,
+                         activo: Optional[bool] = None):
+    """Lleva una secuencia (T,133) al marco corporal. ESTA función es el único
+    lugar donde se define el punto de vista canónico, y la app ejecuta una copia
+    idéntica: si divergieran, el modelo vería en producción un sistema de
+    coordenadas distinto del de entrenamiento."""
+    activo = CANONICALIZAR_VISTA if activo is None else activo
+    corregir_inclinacion = (CORREGIR_INCLINACION_CAMARA if corregir_inclinacion is None
+                            else corregir_inclinacion)
+    secuencia = np.asarray(secuencia, dtype=np.float32)
+    info = {'aplicado': False, 'nivelado': False, 'azimut_grados': 0.0,
+            'confianza_azimut': 0.0, 'inclinacion_grados': 0.0, 'motivo_sin_nivelar': ''}
+    if not activo:
+        return secuencia, info
+
+    coords = _coords_de(secuencia)
+    visibilidad = _visibilidad_de_secuencia(secuencia)
+
+    if corregir_inclinacion:
+        normal, diagnostico = estimar_normal_del_suelo(coords, visibilidad)
+        if normal is None:
+            info['motivo_sin_nivelar'] = diagnostico.get('motivo', '')
+        else:
+            coords = aplicar_rotacion(coords, rotacion_entre_vectores(
+                normal, np.array([0.0, 1.0, 0.0], dtype=np.float32)))
+            info['nivelado'] = True
+            info['inclinacion_grados'] = float(diagnostico.get('inclinacion_grados', 0.0))
+            info['planitud_suelo'] = float(diagnostico.get('planitud', float('nan')))
+
+    theta, confianza = estimar_azimut(coords, visibilidad)
+    coords = aplicar_rotacion(coords, matriz_rotacion_vertical(theta))
+    info['aplicado'] = True
+    info['azimut_grados'] = float(np.degrees(theta))
+    info['confianza_azimut'] = float(confianza)
+    return _con_coords(secuencia, coords), info
+
+
+def canonicalizar_lote(X: np.ndarray, **kwargs) -> np.ndarray:
+    """Aplica canonicalizar_vista a un conjunto (N,T,133)."""
+    return np.stack([canonicalizar_vista(m, **kwargs)[0] for m in X]).astype(np.float32)
+
+# El bloque de arriba NO se escribe a mano: la celda lo inyecta con
+# inspect.getsource() desde las funciones YA EJECUTADAS de la Seccion 1.4.5, asi
+# que es literalmente el mismo codigo con el que se construyo cada tensor de
+# entrenamiento. Copiarlo a mano seria la forma mas facil de que la app y el
+# notebook acaben en sistemas de coordenadas distintos sin que nadie lo note.
+
+
 def extract_video_sequence(video_path, active_landmarks=None, sequence_size=SEQ_LEN):
     captura = cv2.VideoCapture(str(video_path))
     if not captura.isOpened():
@@ -253,7 +455,12 @@ def extract_video_sequence(video_path, active_landmarks=None, sequence_size=SEQ_
                                 else pose_result_to_features_aligned(resultado, active_landmarks))
     captura.release()
     secuencia, cobertura = interpolate_missing(secuencia)
-    return secuencia, cobertura, visibilidades.mean(axis=0)
+    # Canonicalizacion de punto de vista: MISMA funcion y mismo momento que en
+    # el notebook (final de normalize_sequence_like_camera_app). Es lo que hace
+    # que un video grabado en diagonal produzca el mismo tensor que uno de
+    # frente, y lo que evita que el angulo de camara se lea como error tecnico.
+    secuencia, info_vista = canonicalizar_vista(secuencia)
+    return secuencia, cobertura, visibilidades.mean(axis=0), info_vista
 
 
 # ---------------- Visualizacion: esqueleto y zona del error ----------------
@@ -333,7 +540,7 @@ def _a_h264(entrada):
 
 
 def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
-                         lado_maximo=720):
+                         lado_maximo=720, titulo_forzado=None):
     """Video con el esqueleto dibujado y la region del error resaltada, mas la
     imagen del instante mas critico del movimiento.
 
@@ -358,11 +565,18 @@ def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
     ancho = max(2, int(round(ancho_original * escala)) // 2 * 2)
     alto = max(2, int(round(alto_original * escala)) // 2 * 2)
 
-    focos = CLINICAL['focus_landmarks'][exercise][str(class_id)]
-    nombre_clase = CLINICAL['taxonomy'][exercise][str(class_id)]
-    es_correcto = nombre_clase == 'correcto'
-    titulo = 'Ejecucion correcta' if es_correcto else f"Detectado: {nombre_clase.replace('_', ' ')}"
-    subtitulo = ('' if es_correcto else zona)[:78]
+    if titulo_forzado:
+        # Sin tipificacion confiable no se resalta ninguna zona: senalar una
+        # articulacion concreta afirmaria algo que la validacion no sostiene.
+        focos, es_correcto, titulo = [], False, titulo_forzado
+        subtitulo = zona[:78]
+    else:
+        focos = CLINICAL['focus_landmarks'][exercise][str(class_id)]
+        nombre_clase = CLINICAL['taxonomy'][exercise][str(class_id)]
+        es_correcto = nombre_clase == 'correcto'
+        titulo = ('Ejecucion correcta' if es_correcto
+                  else f"Detectado: {nombre_clase.replace('_', ' ')}")
+        subtitulo = ('' if es_correcto else zona)[:78]
 
     indices = (np.arange(total) if 0 < total <= max_frames
                else np.linspace(0, max(total - 1, 0), max_frames).round().astype(int))
@@ -447,7 +661,13 @@ class CascadaInferencia:
 
 
 def raiz_de_modelos():
-    """Acepta tanto modelos/<ejercicio>/ como <ejercicio>/ en la raiz."""
+    """Carpeta que contiene un subdirectorio por ejercicio.
+
+    Se acepta tanto `modelos/<ejercicio>/` como `<ejercicio>/` en la raiz. Al
+    subir el paquete a GitHub por la web es muy facil que las subcarpetas
+    queden un nivel mas arriba de lo previsto, y eso tumbaba la app con un
+    FileNotFoundError que no decia nada util. Verificado en despliegue real.
+    """
     candidata = BASE / 'modelos'
     return candidata if candidata.is_dir() else BASE
 
@@ -477,6 +697,9 @@ def load_bundle(exercise):
 
 
 def ejercicios_disponibles():
+    """Un ejercicio es una carpeta que trae su mapa de clases. Filtrar por ese
+    archivo -y no por "es un directorio"- impide que .streamlit, __pycache__ o
+    cualquier otra carpeta del repositorio se cuele como si fuera un modelo."""
     return sorted(p.name for p in raiz_de_modelos().iterdir()
                   if p.is_dir() and (p / 'class_map_multiclase.json').exists())
 
@@ -503,7 +726,7 @@ def evaluar(video_path, etiqueta_ejercicio):
     bundle = load_bundle(exercise)
     try:
         # Restringido a los landmarks con los que se entreno este modelo.
-        secuencia, cobertura, visibilidad = extract_video_sequence(
+        secuencia, cobertura, visibilidad, info_vista = extract_video_sequence(
             video_path, bundle['active_landmarks'])
     except ValueError as error:
         return {'estado': 'ilegible', 'mensaje': str(error)}
@@ -537,6 +760,18 @@ def evaluar(video_path, etiqueta_ejercicio):
 
     nombres = {int(k): v for k, v in CLINICAL['taxonomy'][exercise].items()}
     guia = CLINICAL['knowledge_base'][exercise][str(clase)]
+    metricas_modelo = bundle['class_map'].get('metricas_validacion') or {}
+
+    # COMPUERTA DE CONFIABILIDAD POR CLASE. La deteccion (hay error / no hay
+    # error) y la tipificacion (cual error) son dos tareas con evidencia muy
+    # distinta: la primera esta validada contra la etiqueta real del dataset, la
+    # segunda contra etiquetas que derivamos nosotros por reglas. Cuando el
+    # recall validado de la clase predicha no llega al minimo, se reporta la
+    # desviacion SIN nombrarla. Es la diferencia entre "no se" y "te digo algo
+    # que probablemente sea falso".
+    recall_clase = (metricas_modelo.get('recall_por_clase') or {}).get(nombres[clase])
+    sin_tipificar = (clase != 0 and recall_clase is not None
+                      and recall_clase < RECALL_MINIMO_PARA_TIPIFICAR)
 
     avisos = []
     if not bundle['class_map'].get('entrenado_con_datos_reales', True):
@@ -552,10 +787,37 @@ def evaluar(video_path, etiqueta_ejercicio):
                        'porcentaje de confianza. Suele deberse a un encuadre o angulo de camara '
                        'muy distinto al de los datos de entrenamiento.'))
 
+    if sin_tipificar:
+        avisos.append((
+            'Desviacion sin tipificar',
+            f'El sistema detecto que la ejecucion se aparta del patron correcto, pero no '
+            f'nombra cual error fue. El subtipo mas probable ("{nombres[clase].replace("_", " ")}") '
+            f'alcanzo un recall de {recall_clase:.2f} en la validacion por sujeto, por debajo '
+            f'del minimo de {RECALL_MINIMO_PARA_TIPIFICAR:.2f} que exigimos para afirmarlo. '
+            'Preferimos decir que no sabemos antes que darte un diagnostico que acertamos '
+            'menos de la mitad de las veces.'))
+        etiqueta_clase = 'desviacion tecnica sin tipificar'
+        zona = 'No determinada'
+        correccion = ('Revisa la ejecucion completa con el video anotado: profundidad, '
+                      'alineacion de rodillas y posicion del tronco. Si el patron se repite, '
+                      'consultalo con un kinesiologo o un entrenador.')
+        fundamento = ('La deteccion de que algo se aparta del patron esta validada contra la '
+                      'etiqueta real del dataset. La tipificacion del subtipo, en cambio, se '
+                      'entrena con etiquetas derivadas por reglas, y para esta clase no alcanza '
+                      'el rendimiento minimo para reportarse como diagnostico.')
+        referencia = ''
+    else:
+        etiqueta_clase = nombres[clase].replace('_', ' ')
+        zona = guia['zona_biomecanica']
+        correccion = guia['instruccion_correctiva']
+        fundamento = guia['fundamento_medico']
+        referencia = CLINICAL['citations'].get(guia['citation_key'], '')
+
     # Lectura visual: esqueleto sobre el video con la zona del error resaltada.
     try:
         video_anotado, imagen_clave = render_pose_overlay(
-            video_path, exercise, clase, guia['zona_biomecanica'])
+            video_path, exercise, clase, zona,
+            titulo_forzado=('Desviacion detectada, sin tipificar' if sin_tipificar else None))
     except Exception as error:   # la evaluacion ya es valida: el overlay es un extra
         print(f'[aviso] no se pudo generar el overlay: {error}')
         video_anotado, imagen_clave = None, None
@@ -565,18 +827,20 @@ def evaluar(video_path, etiqueta_ejercicio):
         'ejercicio': exercise,
         'ejercicio_label': etiqueta_es(exercise),
         'clase': clase,
-        'clase_nombre': nombres[clase].replace('_', ' '),
+        'clase_nombre': etiqueta_clase,
         'es_correcto': nombres[clase] == 'correcto',
+        'sin_tipificar': bool(sin_tipificar),
         'confianza': float(probabilidades[clase]),
         'cobertura': float(cobertura),
-        'zona': guia['zona_biomecanica'],
-        'correccion': guia['instruccion_correctiva'],
-        'fundamento': guia['fundamento_medico'],
-        'referencia': CLINICAL['citations'].get(guia['citation_key'], ''),
+        'zona': zona,
+        'correccion': correccion,
+        'fundamento': fundamento,
+        'referencia': referencia,
         'reparto': {nombres[i].replace('_', ' '): float(pr)
                     for i, pr in enumerate(probabilidades)},
         'avisos': avisos,
-        'metricas': bundle['class_map'].get('metricas_validacion'),
+        'metricas': metricas_modelo or None,
+        'vista': info_vista,
         'imagen': imagen_clave,
         'video': video_anotado,
     }
@@ -603,7 +867,9 @@ def analizar(video_path, etiqueta_ejercicio):
                   f"{r['correccion']}\n\n"
                   f"**Por que importa:** {r['fundamento']}\n")
     else:
-        cuerpo = (f"## Se detecto: {r['clase_nombre']}\n\n"
+        encabezado = ('Desviacion tecnica detectada, sin tipificar' if r.get('sin_tipificar')
+                      else f"Se detecto: {r['clase_nombre']}")
+        cuerpo = (f"## {encabezado}\n\n"
                   f"**Ejercicio:** {r['ejercicio_label']}  \n"
                   f"**Confianza:** {r['confianza'] * 100:.1f}%  \n"
                   f"**Cobertura de postura:** {r['cobertura'] * 100:.0f}%\n\n"
