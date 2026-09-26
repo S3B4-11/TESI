@@ -4,6 +4,7 @@
     "hewett2005": "Hewett, T. E., Myer, G. D., Ford, K. R., Heidt, R. S., Colosimo, A. J., McLean, S. G., van den Bogert, A. J., Paterno, M. V., & Succop, P. (2005). Biomechanical measures of neuromuscular control and valgus loading of the knee predict anterior cruciate ligament injury risk in female athletes: A prospective study. The American Journal of Sports Medicine, 33(4), 492–501. https://doi.org/10.1177/0363546504269591",
     "callaghan_mcgill2001": "Callaghan, J. P., & McGill, S. M. (2001). Intervertebral disc herniation: Studies on a porcine model exposed to highly repetitive flexion/extension motion with compressive force. Clinical Biomechanics, 16(1), 28–37. https://doi.org/10.1016/S0268-0033(00)00063-2",
     "ludewig_cook2000": "Ludewig, P. M., & Cook, T. M. (2000). Alterations in shoulder kinematics and associated muscle activity in people with symptoms of shoulder impingement. Physical Therapy, 80(3), 276–291. https://doi.org/10.1093/ptj/80.3.276",
+    "kritz2009": "Kritz, M., Cronin, J., & Hume, P. (2009). The bodyweight squat: A movement screen for the squat pattern. Strength and Conditioning Journal, 31(1).",
     "cook2006": "Cook, G., Burton, L., & Hoogenboom, B. (2006). Pre-participation screening: The use of fundamental movements as an assessment of function – Part 1. North American Journal of Sports Physical Therapy, 1(2), 62–72."
   },
   "taxonomy": {
@@ -11,12 +12,6 @@
       "0": "correcto",
       "1": "rango_incompleto",
       "2": "compensacion_de_tronco"
-    },
-    "inline_lunge": {
-      "0": "correcto",
-      "1": "poca_profundidad",
-      "2": "valgo_de_rodilla",
-      "3": "inclinacion_de_tronco"
     },
     "shoulder_abduction": {
       "0": "correcto",
@@ -33,7 +28,6 @@
   },
   "labels": {
     "elbow_flexion": "Flexión de codo (curl de bíceps)",
-    "inline_lunge": "Zancada / estocada",
     "shoulder_abduction": "Abducción de hombro (elevación lateral)",
     "squat": "Sentadilla"
   },
@@ -49,29 +43,6 @@
         15
       ],
       "2": [
-        11,
-        12,
-        23,
-        24
-      ]
-    },
-    "inline_lunge": {
-      "0": [],
-      "1": [
-        23,
-        24,
-        25,
-        26,
-        27,
-        28
-      ],
-      "2": [
-        25,
-        26,
-        27,
-        28
-      ],
-      "3": [
         11,
         12,
         23,
@@ -123,6 +94,44 @@
       ]
     }
   },
+  "guia_cinematica": {
+    "profundidad": {
+      "zona_biomecanica": "Cadera y rodilla — amplitud del descenso",
+      "instruccion_correctiva": "Baja hasta que el muslo llegue al menos a la paralela con el suelo, controlando el descenso. Si no alcanzas ese rango, revisa movilidad de tobillo y cadera antes de agregar carga.",
+      "fundamento_medico": "Schoenfeld (2010) clasifica la sentadilla por flexión de rodilla: parcial en torno a 40°, media entre 70 y 100°, y profunda sobre 100°. Un descenso parcial reduce el trabajo de la musculatura extensora de cadera; la sentadilla profunda, en personas sin restricción articular, es un rango válido y no un error.",
+      "citation_key": "schoenfeld2010"
+    },
+    "paralelismo_tronco_tibia": {
+      "zona_biomecanica": "Tronco y tibia — distribución del centro de masa",
+      "instruccion_correctiva": "Busca que el ángulo del tronco acompañe al de la tibia. Si el tronco se va mucho más adelante que la tibia, revisa movilidad de tobillo; si queda mucho más erguido, es probable que la cadera no esté participando.",
+      "fundamento_medico": "Kritz et al. (2009) proponen el paralelismo entre el vector del torso y el de la tibia como criterio de tamizaje de la sentadilla sin carga: mantiene el centro de masa sobre la base de sustentación. Al ser un criterio RELATIVO, se ajusta solo a la profundidad y a la proporción de segmentos de cada persona, a diferencia de un umbral absoluto de inclinación.",
+      "citation_key": "kritz2009"
+    },
+    "valgo_de_rodilla": {
+      "zona_biomecanica": "Rodilla — plano frontal",
+      "instruccion_correctiva": "Empuja activamente las rodillas hacia afuera, en línea con la punta de los pies, durante todo el recorrido. Reduce la carga o la profundidad hasta poder sostener esa alineación.",
+      "fundamento_medico": "El desplazamiento medial de la rodilla (valgo dinámico) se asoció prospectivamente con mayor riesgo de lesión del ligamento cruzado anterior en atletas (Hewett et al., 2005).",
+      "citation_key": "hewett2005"
+    },
+    "simetria": {
+      "zona_biomecanica": "Cadera y rodilla — reparto de carga entre piernas",
+      "instruccion_correctiva": "Reparte el peso entre ambos pies y baja a la misma profundidad con las dos piernas. Una diferencia persistente conviene evaluarla con un profesional.",
+      "fundamento_medico": "Una asimetría marcada concentra la carga en una extremidad. Umbral fijado como convención operativa de este trabajo, no tomado de una fuente publicada.",
+      "citation_key": null
+    },
+    "rango_incompleto": {
+      "zona_biomecanica": "Amplitud articular del gesto",
+      "instruccion_correctiva": "Completa el recorrido articular del ejercicio de forma controlada, sin rebote. Si el rango se acorta al final de la serie, es fatiga: baja la carga.",
+      "fundamento_medico": "Umbral de amplitud fijado como convención operativa de este trabajo a partir del recorrido habitual del gesto completo; no proviene de una fuente publicada.",
+      "citation_key": null
+    },
+    "compensacion_de_tronco": {
+      "zona_biomecanica": "Tronco — estabilidad durante el gesto",
+      "instruccion_correctiva": "Mantén el tronco estable y evita el balanceo para ayudar al movimiento. Si necesitas impulso para completar la repetición, la carga está alta.",
+      "fundamento_medico": "El balanceo del tronco desplaza el trabajo fuera de la musculatura objetivo. Umbral fijado como convención operativa de este trabajo.",
+      "citation_key": null
+    }
+  },
   "knowledge_base": {
     "elbow_flexion": {
       "0": {
@@ -142,32 +151,6 @@
         "instruccion_correctiva": "Reduce la carga y evita impulsar el peso con la espalda: el único segmento que debe moverse es el antebrazo, con el codo fijo junto al tronco.",
         "fundamento_medico": "El balanceo del tronco para completar la repetición genera flexo-extensión repetida de la columna bajo carga añadida en el momento del impulso, un patrón de carga descrito como factor de riesgo para el disco intervertebral (Callaghan & McGill, 2001).",
         "citation_key": "callaghan_mcgill2001"
-      }
-    },
-    "inline_lunge": {
-      "0": {
-        "zona_biomecanica": "—",
-        "instruccion_correctiva": "Mantén el patrón: descenso controlado, rodilla alineada sobre el pie y tronco erguido sobre una base de apoyo estrecha.",
-        "fundamento_medico": "La zancada en línea evalúa el control del tronco y de la cadera en una base de sustentación reducida, uno de los patrones fundamentales del cribado de movimiento funcional; ejecutarla con rodilla alineada y tronco estable refleja un control neuromuscular adecuado (Cook et al., 2006).",
-        "citation_key": "cook2006"
-      },
-      "1": {
-        "zona_biomecanica": "Cadera y rodilla — profundidad del descenso en la zancada",
-        "instruccion_correctiva": "Desciende hasta que la rodilla trasera se aproxime al suelo y la rodilla delantera alcance unos 90°, sin perder el equilibrio; acorta el paso si no logras el recorrido.",
-        "fundamento_medico": "Un descenso incompleto reduce la demanda de control excéntrico de cadera y rodilla que este patrón está destinado a entrenar y evaluar, y limita el desarrollo de fuerza en el rango articular donde el patrón es más exigente (Cook et al., 2006).",
-        "citation_key": "cook2006"
-      },
-      "2": {
-        "zona_biomecanica": "Rodilla delantera — plano frontal (colapso medial / valgo dinámico)",
-        "instruccion_correctiva": "Mantén la rodilla delantera alineada sobre la punta del pie durante todo el descenso; empuja la rodilla ligeramente hacia afuera y activa el glúteo medio.",
-        "fundamento_medico": "El colapso medial de la rodilla en apoyo unipodal incrementa la carga de tensión sobre el ligamento cruzado anterior; un mayor momento de valgo de rodilla predijo de forma prospectiva el riesgo de lesión del LCA en atletas (Hewett et al., 2005).",
-        "citation_key": "hewett2005"
-      },
-      "3": {
-        "zona_biomecanica": "Tronco — pérdida de la vertical durante la zancada",
-        "instruccion_correctiva": "Mantén el torso erguido y perpendicular al suelo, sin inclinarte hacia adelante ni lateralmente; si pierdes la vertical, reduce la profundidad hasta recuperar el control.",
-        "fundamento_medico": "La inclinación del tronco en este patrón indica que la estabilidad se está compensando con la columna en vez de con la cadera; el control del tronco sobre una base estrecha es precisamente lo que evalúa este movimiento fundamental (Cook et al., 2006).",
-        "citation_key": "cook2006"
       }
     },
     "shoulder_abduction": {

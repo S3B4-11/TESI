@@ -138,6 +138,36 @@ with derecha:
             st.caption('No se pudo generar el video anotado.')
 
     with pestanas[2]:
+        # Lo primero del detalle tecnico son los ANGULOS MEDIDOS. Un numero con
+        # su referencia al lado lo puede verificar cualquiera; un porcentaje de
+        # confianza de una red, no.
+        cine = r.get('cinematica') or {}
+        if cine.get('hallazgos'):
+            st.markdown('**Criterios cinemáticos medidos**')
+            st.caption(f"Vista detectada: {cine['plano']}."
+                       + (f" {cine['motivo_plano']}" if cine.get('motivo_plano') else ''))
+            simbolo = {'en_rango': '✓', 'limite': '~', 'fuera_de_rango': '✗', 'no_evaluable': '—'}
+            for h in cine['hallazgos']:
+                valor = ('no medible con este encuadre' if h['veredicto'] == 'no_evaluable'
+                         else f"{h['valor']} {h['unidad']}")
+                st.markdown(
+                    '<div class="campo"><div class="clave">'
+                    + simbolo[h['veredicto']] + '  ' + h['nombre']
+                    + '</div><div class="valor">' + valor
+                    + '<br><span class="pie">Referencia: ' + h['referencia']
+                    + ('' if not h['lectura'] else ' · ' + h['lectura'])
+                    + ('' if h['fuente'] else ' · umbral: convención de este trabajo')
+                    + '</span></div></div>', unsafe_allow_html=True)
+
+        red = r.get('deteccion_red') or {}
+        if red:
+            st.markdown('**Qué dijo el modelo de Deep Learning**')
+            st.caption(
+                ('Marcó desviación' if red['marca_desviacion'] else 'No marcó desviación')
+                + f" (probabilidad de error {red['p_error']:.0%}"
+                + (f", subtipo más probable: {red['clase_red']}" if red['marca_desviacion'] else '')
+                + '). El modelo decide si hay desviación; los criterios de arriba dicen cuál.')
+
         st.markdown('**Probabilidad por clase**')
         for nombre, valor in sorted(r['reparto'].items(), key=lambda x: -x[1]):
             st.progress(min(max(float(valor), 0.0), 1.0), text=f'{nombre} — {valor:.1%}')

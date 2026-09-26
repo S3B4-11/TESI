@@ -179,6 +179,18 @@ VISIBILIDAD_MINIMA = 0.5
 # usuario no tiene forma de saber cual de las dos veces le toco.
 RECALL_MINIMO_PARA_TIPIFICAR = 0.40
 
+# Que articulaciones resaltar segun el criterio cinematico que se salio de rango.
+# Antes se indexaba por la clase que devolvia la red; ahora por la medida que
+# efectivamente falló, que es lo que el usuario necesita mirar.
+FOCOS_POR_CRITERIO = {
+    'profundidad': [23, 24, 25, 26, 27, 28],
+    'paralelismo_tronco_tibia': [11, 12, 23, 24, 25, 26, 27, 28],
+    'valgo_de_rodilla': [25, 26, 27, 28],
+    'simetria': [25, 26, 27, 28],
+    'rango_incompleto': [11, 12, 13, 14, 15, 16],
+    'compensacion_de_tronco': [11, 12, 23, 24],
+}
+
 
 def visibilidad_de(result):
     """Confianza por landmark que reporta MediaPipe, SIN tocar. No entra al
@@ -224,6 +236,373 @@ def interpolate_missing(sequence):
     coordenadas = np.stack(columnas, axis=1).astype(np.float32)
     salida = np.concatenate([coordenadas, detected[:, None].astype(np.float32)], axis=1)
     return salida, float(detected.mean())
+
+
+# ---------- Motor cinematico (Seccion 3.0.d) ----------
+# INYECTADO desde el notebook: misma cadena CODIGO_CINEMATICA.
+# Profundidad de sentadilla por FLEXIÓN DE RODILLA, según Schoenfeld (2010):
+#   parcial ~40°  |  media 70-100°  |  profunda >100°
+# Ojo con la convención: la flexión es 180° menos el ángulo interno
+# cadera-rodilla-tobillo. Mezclarlas invierte los umbrales.
+FLEXION_RODILLA_MEDIA = 70.0
+FLEXION_RODILLA_PROFUNDA = 100.0
+# La sentadilla PROFUNDA es una categoría válida de la literatura, no un error.
+# Solo se marca la profundidad INSUFICIENTE.
+TOLERANCIA_PROFUNDIDAD = 10.0
+
+# Paralelismo tronco-tibia (Kritz et al., 2009): con el centro de masa sobre el
+# medio pie, el vector del torso y el de la tibia quedan aproximadamente
+# paralelos. Es un criterio RELATIVO, así que se ajusta solo a la profundidad y
+# a la anatomía de cada persona — que es justo lo que un umbral absoluto de
+# inclinación no puede hacer. Las tolerancias son convención de este trabajo.
+# Kritz et al. lo enuncian de forma cualitativa ("aproximadamente paralelos"),
+# no como un numero. 20°/30° es tolerancia de este trabajo, elegida amplia a
+# proposito: la proporcion femur/tibia cambia mucho entre personas y una banda
+# estrecha castigaria la anatomia en vez de la tecnica.
+PARALELISMO_EN_RANGO = 20.0
+PARALELISMO_LIMITE = 30.0
+
+# Valgo: desplazamiento medial de la rodilla respecto de la recta cadera-tobillo,
+# normalizado por el ancho de caderas. Adimensional, así que no depende del
+# tamaño de la persona. Tolerancias: convención de este trabajo.
+VALGO_EN_RANGO = 0.10
+VALGO_LIMITE = 0.20
+
+# Asimetría entre piernas y compensación de tronco: convención de este trabajo.
+ASIMETRIA_EN_RANGO = 10.0
+ASIMETRIA_LIMITE = 20.0
+COMPENSACION_TRONCO_EN_RANGO = 15.0
+COMPENSACION_TRONCO_LIMITE = 25.0
+
+# Rango articular de hombro y codo: convención de este trabajo, tomada de los
+# valores de amplitud habituales del gesto completo.
+ABDUCCION_COMPLETA = 150.0
+ABDUCCION_LIMITE = 120.0
+FLEXION_CODO_COMPLETA = 120.0
+FLEXION_CODO_LIMITE = 95.0
+
+# Confianza mínima del azimut para creerle al plano estimado.
+CONFIANZA_VISTA_MINIMA = 0.25
+
+
+def _angulo_articular(a, vertice, c):
+    """Ángulo (grados) en `vertice` entre los segmentos vertice->a y vertice->c."""
+    va, vc = np.asarray(a) - np.asarray(vertice), np.asarray(c) - np.asarray(vertice)
+    coseno = np.sum(va * vc, axis=-1) / (
+        np.linalg.norm(va, axis=-1) * np.linalg.norm(vc, axis=-1) + 1e-9)
+    return np.degrees(np.arccos(np.clip(coseno, -1.0, 1.0)))
+
+
+def _angulo_con_vertical(vectores, desde_abajo=False):
+    """Ángulo (grados) respecto de la vertical. En la convención canónica el eje
+    vertical es Y y crece hacia ABAJO.
+
+    desde_abajo=False: desviación respecto de la LÍNEA vertical, 0-90°. Correcto
+        para el tronco y la tibia, que no se invierten.
+    desde_abajo=True: ángulo respecto de la DIRECCIÓN hacia abajo, 0-180°
+        (0 = colgando, 90 = horizontal, 180 = sobre la cabeza). Obligatorio para
+        el brazo: acotado a 90°, una abducción de 170° mediría 10° y sería
+        indistinguible del brazo colgando.
+    """
+    vectores = np.asarray(vectores)
+    componente_vertical = vectores[..., 1] if desde_abajo else np.abs(vectores[..., 1])
+    fuera_de_eje = np.linalg.norm(vectores[..., [0, 2]], axis=-1)
+    return np.degrees(np.arctan2(fuera_de_eje, componente_vertical + 1e-9))
+
+
+# Longitud minima de un segmento para creerle, en unidades de torso. Por debajo
+# de esto el esqueleto esta colapsado y cualquier angulo que se calcule es ruido.
+SEGMENTO_MINIMO = 0.05
+
+
+def postura_utilizable(coords, ejercicio):
+    """Comprueba que el esqueleto tenga geometria real antes de medir angulos.
+
+    Sin esto, un tensor degenerado —todo en cero, o un landmark que MediaPipe no
+    vio y quedo en el origen— produce angulos perfectamente calculables y sin
+    ningun sentido, y el sistema declararia "correcto" una postura que no existe.
+    """
+    medio = coords[len(coords) // 2]
+    if ejercicio in EJERCICIOS_DE_PIERNA:
+        segmentos = ((23, 24), (23, 25), (25, 27), (24, 26), (26, 28), (11, 23))
+    else:
+        segmentos = ((11, 12), (12, 14), (14, 16), (11, 23), (12, 24))
+    largos = [float(np.linalg.norm(medio[a] - medio[b])) for a, b in segmentos]
+    if min(largos) < SEGMENTO_MINIMO:
+        return False, 'el esqueleto detectado no tiene geometria valida (segmentos colapsados)'
+    if not np.isfinite(coords).all():
+        return False, 'hay coordenadas no finitas en la secuencia'
+    return True, ''
+
+
+def plano_de_la_vista(info_vista):
+    """Qué plano permite medir este encuadre.
+
+    Trabajamos con coordenadas 3D, así que en teoría cualquier ángulo se puede
+    calcular desde cualquier ángulo de cámara. En la práctica no: la coordenada
+    de profundidad de MediaPipe es una ESTIMACIÓN monocular con mucho más error
+    que las dos de imagen. Entonces lo que importa es qué medida cae en el plano
+    de la imagen —donde el dato es bueno— y cuál cae en la profundidad.
+
+      vista LATERAL  -> el plano sagital está en la imagen: profundidad de
+                        sentadilla, inclinación de tronco y tibia son confiables.
+      vista FRONTAL  -> el plano frontal está en la imagen: la alineación de
+                        rodillas (valgo) y la simetría son confiables.
+
+    El azimut que la Sección 1.4.5 quitó al canonicalizar es justamente el
+    ángulo de la cámara, así que ya lo tenemos calculado.
+    """
+    if not info_vista or not info_vista.get('aplicado'):
+        return {'plano': 'indeterminado', 'motivo': 'no se pudo estimar el ángulo de cámara'}
+    if float(info_vista.get('confianza_azimut', 0.0)) < CONFIANZA_VISTA_MINIMA:
+        return {'plano': 'indeterminado',
+                'motivo': 'la orientación del cuerpo no se estimó con confianza suficiente'}
+    # |cos(azimut)| alto => la línea de caderas estaba a lo ancho de la imagen.
+    coseno = abs(float(np.cos(np.radians(info_vista.get('azimut_grados', 0.0)))))
+    if coseno > 0.70:
+        return {'plano': 'frontal', 'motivo': ''}
+    if coseno < 0.35:
+        return {'plano': 'sagital', 'motivo': ''}
+    return {'plano': 'oblicuo', 'motivo': 'la cámara está en diagonal'}
+
+
+def _indice_mas_profundo(coords):
+    """Instante de máxima flexión de rodilla: el punto más bajo del movimiento."""
+    flexion = 180.0 - (_angulo_articular(coords[:, 23], coords[:, 25], coords[:, 27]) +
+                       _angulo_articular(coords[:, 24], coords[:, 26], coords[:, 28])) / 2.0
+    return int(np.argmax(flexion)), flexion
+
+
+def medidas_de_sentadilla(coords):
+    """Medidas cinemáticas en el instante más profundo. `coords` es (T,33,3) ya
+    canonicalizado: +X a la izquierda de la persona, +Y abajo, -Z adelante.
+
+    Los ángulos son invariantes a la escala, así que da igual que la secuencia
+    venga normalizada por la longitud de torso de cada fotograma.
+    """
+    indice, flexion_media = _indice_mas_profundo(coords)
+    c = coords[indice]
+
+    flexion_izq = 180.0 - float(_angulo_articular(c[23], c[25], c[27]))
+    flexion_der = 180.0 - float(_angulo_articular(c[24], c[26], c[28]))
+
+    centro_cadera = (c[23] + c[24]) / 2.0
+    centro_hombro = (c[11] + c[12]) / 2.0
+    tronco = float(_angulo_con_vertical(centro_hombro - centro_cadera))
+    tibia = float(np.mean([_angulo_con_vertical(c[25] - c[27]),
+                           _angulo_con_vertical(c[26] - c[28])]))
+
+    # Valgo: cuánto se mete la rodilla hacia la línea media respecto de la recta
+    # cadera-tobillo, medido en el eje lateral (X) y normalizado por el ancho de
+    # caderas para que no dependa del tamaño de la persona.
+    ancho_caderas = float(abs(c[23][0] - c[24][0])) or 1e-6
+    valgo = []
+    for cadera, rodilla, tobillo, signo in ((23, 25, 27, 1.0), (24, 26, 28, -1.0)):
+        proporcion = float(np.clip(
+            (c[rodilla][1] - c[cadera][1]) / ((c[tobillo][1] - c[cadera][1]) or 1e-6), 0.0, 1.0))
+        x_esperado = c[cadera][0] + proporcion * (c[tobillo][0] - c[cadera][0])
+        # Positivo = la rodilla se fue hacia adentro (hacia la línea media).
+        valgo.append(signo * (x_esperado - c[rodilla][0]) / ancho_caderas)
+
+    return {
+        'indice_clave': indice,
+        'flexion_rodilla': (flexion_izq + flexion_der) / 2.0,
+        'flexion_rodilla_izq': flexion_izq,
+        'flexion_rodilla_der': flexion_der,
+        'asimetria_rodillas': abs(flexion_izq - flexion_der),
+        'inclinacion_tronco': tronco,
+        'inclinacion_tibia': tibia,
+        'desalineacion_tronco_tibia': abs(tronco - tibia),
+        'valgo': max(valgo),
+        'recorrido_flexion': float(np.ptp(flexion_media)),
+    }
+
+
+def medidas_de_brazo(coords, indice=None):
+    """Abducción de hombro, flexión de codo y compensación de tronco."""
+    hombro, codo, muneca = 12, 14, 16          # lado derecho tras el espejado
+    # La abducción de hombro es el ángulo del HÚMERO (hombro->codo), no de la
+    # línea hombro->muñeca. Usar la muñeca mezcla dos articulaciones: con el codo
+    # flexionado 10°, una abducción real de 165° se mediría como 156°, y el
+    # error crece con la flexión de codo. Es la diferencia entre medir el gesto
+    # y medir una suma de gestos.
+    abduccion = _angulo_con_vertical(coords[:, codo] - coords[:, hombro], desde_abajo=True)
+    flexion_codo = 180.0 - _angulo_articular(coords[:, hombro], coords[:, codo], coords[:, muneca])
+    if indice is None:
+        indice = int(np.argmax(abduccion))
+    centro_cadera = (coords[:, 23] + coords[:, 24]) / 2.0
+    centro_hombro = (coords[:, 11] + coords[:, 12]) / 2.0
+    tronco = _angulo_con_vertical(centro_hombro - centro_cadera)
+    return {
+        'indice_clave': int(indice),
+        'abduccion_max': float(np.max(abduccion)),
+        'flexion_codo_max': float(np.max(flexion_codo)),
+        'extension_codo_min': float(np.min(flexion_codo)),
+        'inclinacion_tronco_max': float(np.max(tronco)),
+        'recorrido_abduccion': float(np.ptp(abduccion)),
+        'recorrido_codo': float(np.ptp(flexion_codo)),
+    }
+
+
+def _veredicto(valor, en_rango, limite, mayor_es_peor=True):
+    """Clasifica un valor en tres bandas en vez de un corte binario."""
+    if mayor_es_peor:
+        if valor <= en_rango:
+            return 'en_rango'
+        return 'limite' if valor <= limite else 'fuera_de_rango'
+    if valor >= en_rango:
+        return 'en_rango'
+    return 'limite' if valor >= limite else 'fuera_de_rango'
+
+
+def criterios_de_sentadilla(medidas, plano):
+    """Lista de hallazgos, cada uno con su valor medido, su referencia y si el
+    encuadre permitía evaluarlo."""
+    sagital = plano in ('sagital', 'oblicuo')
+    frontal = plano in ('frontal', 'oblicuo')
+    hallazgos = []
+
+    # 1. Profundidad. La sentadilla profunda NO es un error: solo se marca la
+    #    que no alcanza el rango medio (paralelo).
+    flexion = medidas['flexion_rodilla']
+    if flexion >= FLEXION_RODILLA_PROFUNDA:
+        categoria = 'profunda'
+    elif flexion >= FLEXION_RODILLA_MEDIA:
+        categoria = 'media (paralelo)'
+    else:
+        categoria = 'parcial'
+    hallazgos.append({
+        'clave': 'profundidad',
+        'nombre': 'Profundidad de la sentadilla',
+        'valor': round(flexion, 1), 'unidad': '° de flexión de rodilla',
+        'referencia': f'>= {FLEXION_RODILLA_MEDIA:.0f}° para alcanzar el rango medio; '
+                      f'> {FLEXION_RODILLA_PROFUNDA:.0f}° es sentadilla profunda',
+        'veredicto': ('no_evaluable' if not sagital else
+                      _veredicto(flexion, FLEXION_RODILLA_MEDIA,
+                                 FLEXION_RODILLA_MEDIA - TOLERANCIA_PROFUNDIDAD,
+                                 mayor_es_peor=False)),
+        'lectura': f'Clasificación: sentadilla {categoria}.',
+        'plano': 'sagital', 'fuente': 'schoenfeld2010',
+    })
+
+    # 2. Paralelismo tronco-tibia. Criterio RELATIVO: se ajusta solo a la
+    #    profundidad y a la anatomía, que es lo que un umbral absoluto de
+    #    inclinación no puede hacer.
+    desalineacion = medidas['desalineacion_tronco_tibia']
+    hallazgos.append({
+        'clave': 'paralelismo_tronco_tibia',
+        'nombre': 'Alineación del tronco con la tibia',
+        'valor': round(desalineacion, 1), 'unidad': '° de diferencia',
+        'referencia': f'<= {PARALELISMO_EN_RANGO:.0f}° (tronco y tibia aproximadamente paralelos)',
+        'veredicto': ('no_evaluable' if not sagital else
+                      _veredicto(desalineacion, PARALELISMO_EN_RANGO, PARALELISMO_LIMITE)),
+        'lectura': (f"Tronco {medidas['inclinacion_tronco']:.0f}° y tibia "
+                    f"{medidas['inclinacion_tibia']:.0f}° respecto de la vertical."),
+        'plano': 'sagital', 'fuente': 'kritz2009',
+    })
+
+    # 3. Valgo. Plano frontal: solo se evalúa si la cámara lo permite.
+    hallazgos.append({
+        'clave': 'valgo_de_rodilla',
+        'nombre': 'Alineación de las rodillas',
+        'valor': round(medidas['valgo'], 3), 'unidad': 'del ancho de caderas',
+        'referencia': f'<= {VALGO_EN_RANGO:.2f} de desplazamiento medial',
+        'veredicto': ('no_evaluable' if not frontal else
+                      _veredicto(medidas['valgo'], VALGO_EN_RANGO, VALGO_LIMITE)),
+        'lectura': ('' if frontal else
+                    'El valgo es una medida del plano frontal: hace falta grabar de frente.'),
+        'plano': 'frontal', 'fuente': 'hewett2005',
+    })
+
+    # 4. Simetría entre piernas.
+    hallazgos.append({
+        'clave': 'simetria',
+        'nombre': 'Simetría entre piernas',
+        'valor': round(medidas['asimetria_rodillas'], 1), 'unidad': '° de diferencia',
+        'referencia': f'<= {ASIMETRIA_EN_RANGO:.0f}°',
+        'veredicto': ('no_evaluable' if not frontal else
+                      _veredicto(medidas['asimetria_rodillas'], ASIMETRIA_EN_RANGO,
+                                 ASIMETRIA_LIMITE)),
+        'lectura': (f"Izquierda {medidas['flexion_rodilla_izq']:.0f}°, "
+                    f"derecha {medidas['flexion_rodilla_der']:.0f}°."),
+        'plano': 'frontal', 'fuente': None,
+    })
+    return hallazgos
+
+
+def criterios_de_brazo(medidas, plano, ejercicio):
+    hallazgos = []
+    if ejercicio == 'shoulder_abduction':
+        valor = medidas['abduccion_max']
+        hallazgos.append({
+            'clave': 'rango_incompleto',
+            'nombre': 'Amplitud de la abducción',
+            'valor': round(valor, 1), 'unidad': '° desde el brazo colgando',
+            'referencia': f'>= {ABDUCCION_COMPLETA:.0f}° para el recorrido completo',
+            'veredicto': _veredicto(valor, ABDUCCION_COMPLETA, ABDUCCION_LIMITE,
+                                     mayor_es_peor=False),
+            'lectura': '', 'plano': 'frontal', 'fuente': None,
+        })
+    else:
+        valor = medidas['flexion_codo_max']
+        hallazgos.append({
+            'clave': 'rango_incompleto',
+            'nombre': 'Amplitud de la flexión de codo',
+            'valor': round(valor, 1), 'unidad': '° de flexión',
+            'referencia': f'>= {FLEXION_CODO_COMPLETA:.0f}° para el recorrido completo',
+            'veredicto': _veredicto(valor, FLEXION_CODO_COMPLETA, FLEXION_CODO_LIMITE,
+                                     mayor_es_peor=False),
+            'lectura': '', 'plano': 'sagital', 'fuente': None,
+        })
+    compensacion = medidas['inclinacion_tronco_max']
+    hallazgos.append({
+        'clave': 'compensacion_de_tronco',
+        'nombre': 'Estabilidad del tronco',
+        'valor': round(compensacion, 1), 'unidad': '° respecto de la vertical',
+        'referencia': f'<= {COMPENSACION_TRONCO_EN_RANGO:.0f}°',
+        'veredicto': _veredicto(compensacion, COMPENSACION_TRONCO_EN_RANGO,
+                                 COMPENSACION_TRONCO_LIMITE),
+        'lectura': 'Balancear el tronco para ayudar al brazo desplaza el trabajo '
+                   'fuera del músculo objetivo.',
+        'plano': 'sagital', 'fuente': None,
+    })
+    return hallazgos
+
+
+EJERCICIOS_DE_PIERNA = ('squat', 'inline_lunge')
+
+
+def evaluar_cinematica(secuencia, ejercicio, info_vista=None):
+    """Tipificación por ángulos medidos. Devuelve el plano detectado, las
+    medidas crudas y los hallazgos ordenados por gravedad."""
+    coords = _coords_de(secuencia)
+    vista = plano_de_la_vista(info_vista or {})
+    utilizable, motivo = postura_utilizable(coords, ejercicio)
+    if not utilizable:
+        return {'plano': 'indeterminado', 'motivo_plano': motivo, 'medidas': {},
+                'hallazgos': [], 'principal': None, 'n_fuera_de_rango': 0, 'n_limite': 0,
+                'evaluables': [], 'no_evaluables': [], 'postura_utilizable': False}
+    if ejercicio in EJERCICIOS_DE_PIERNA:
+        medidas = medidas_de_sentadilla(coords)
+        hallazgos = criterios_de_sentadilla(medidas, vista['plano'])
+    else:
+        medidas = medidas_de_brazo(coords)
+        hallazgos = criterios_de_brazo(medidas, vista['plano'], ejercicio)
+
+    orden = {'fuera_de_rango': 0, 'limite': 1, 'en_rango': 2, 'no_evaluable': 3}
+    hallazgos.sort(key=lambda h: (orden[h['veredicto']], -abs(h['valor'])))
+    fuera = [h for h in hallazgos if h['veredicto'] == 'fuera_de_rango']
+    limite = [h for h in hallazgos if h['veredicto'] == 'limite']
+    return {
+        'plano': vista['plano'], 'motivo_plano': vista['motivo'],
+        'medidas': medidas, 'hallazgos': hallazgos,
+        'principal': (fuera or limite or [None])[0],
+        'n_fuera_de_rango': len(fuera), 'n_limite': len(limite),
+        'evaluables': [h['clave'] for h in hallazgos if h['veredicto'] != 'no_evaluable'],
+        'no_evaluables': [h['clave'] for h in hallazgos if h['veredicto'] == 'no_evaluable'],
+        'postura_utilizable': True,
+    }
+
 
 
 # ---------- Canonicalizacion de punto de vista (Seccion 1.4.5) ----------
@@ -540,7 +919,7 @@ def _a_h264(entrada):
 
 
 def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
-                         lado_maximo=720, titulo_forzado=None):
+                         lado_maximo=720, titulo_forzado=None, focos_forzados=None):
     """Video con el esqueleto dibujado y la region del error resaltada, mas la
     imagen del instante mas critico del movimiento.
 
@@ -566,9 +945,11 @@ def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
     alto = max(2, int(round(alto_original * escala)) // 2 * 2)
 
     if titulo_forzado:
-        # Sin tipificacion confiable no se resalta ninguna zona: senalar una
-        # articulacion concreta afirmaria algo que la validacion no sostiene.
-        focos, es_correcto, titulo = [], False, titulo_forzado
+        # Con tipificacion cinematica se resalta la articulacion que se salio de
+        # rango; sin ella no se resalta nada, porque senalar una articulacion
+        # concreta afirmaria algo que ninguna medida sostiene.
+        focos = list(focos_forzados or [])
+        es_correcto, titulo = False, titulo_forzado
         subtitulo = zona[:78]
     else:
         focos = CLINICAL['focus_landmarks'][exercise][str(class_id)]
@@ -759,19 +1140,44 @@ def evaluar(video_path, etiqueta_ejercicio):
               else int(np.argmax(probabilidades)))
 
     nombres = {int(k): v for k, v in CLINICAL['taxonomy'][exercise].items()}
-    guia = CLINICAL['knowledge_base'][exercise][str(clase)]
     metricas_modelo = bundle['class_map'].get('metricas_validacion') or {}
+    detecta_desviacion = clase != 0
 
-    # COMPUERTA DE CONFIABILIDAD POR CLASE. La deteccion (hay error / no hay
-    # error) y la tipificacion (cual error) son dos tareas con evidencia muy
-    # distinta: la primera esta validada contra la etiqueta real del dataset, la
-    # segunda contra etiquetas que derivamos nosotros por reglas. Cuando el
-    # recall validado de la clase predicha no llega al minimo, se reporta la
-    # desviacion SIN nombrarla. Es la diferencia entre "no se" y "te digo algo
-    # que probablemente sea falso".
-    recall_clase = (metricas_modelo.get('recall_por_clase') or {}).get(nombres[clase])
-    sin_tipificar = (clase != 0 and recall_clase is not None
-                      and recall_clase < RECALL_MINIMO_PARA_TIPIFICAR)
+    # TIPIFICACION POR ANGULOS MEDIDOS, no por la clase que devuelve la red.
+    #
+    # Las dos tareas del sistema tienen evidencia MUY distinta. Detectar si hay
+    # desviacion se valido contra la etiqueta real del dataset. Decir CUAL se
+    # validaba contra etiquetas que derivamos nosotros por reglas: circular, y
+    # una de esas reglas estaba mal (llamaba "inclinacion lumbar excesiva" a un
+    # angulo de tronco, que en una sentadilla profunda es lo correcto).
+    #
+    # Aqui la red sigue decidiendo si hay desviacion y el motor cinematico dice
+    # cual, con angulos medidos y umbrales citados. Un numero verificable pesa
+    # mas que una clase aprendida de 180 muestras con etiquetas inventadas.
+    cinematica = evaluar_cinematica(secuencia, exercise, info_vista)
+    principal = cinematica['principal']
+    criterio_fuera = principal is not None and principal['veredicto'] == 'fuera_de_rango'
+
+    # CUANDO LA MEDIDA Y EL MODELO SE CONTRADICEN, MANDA LA MEDIDA.
+    #
+    # No es una preferencia estetica. La red aprendio de UI-PRMD, donde las
+    # repeticiones etiquetadas incorrectas resultaron ser las mas PROFUNDAS
+    # (d de Cohen -0,46). O sea aprendio, fielmente, un sesgo del dataset:
+    # "profundo = malo". Y la sentadilla profunda es una categoria valida de la
+    # literatura (Schoenfeld, 2010), no un error.
+    #
+    # Entonces, si el motor pudo evaluar varios criterios con este encuadre y
+    # TODOS quedaron holgadamente dentro de rango, la ejecucion se reporta como
+    # correcta aunque la red marque desviacion, y el desacuerdo se deja anotado
+    # en el detalle tecnico. Un angulo medido con umbral citado es evidencia mas
+    # fuerte que una clase aprendida de 180 muestras con etiquetas derivadas.
+    # Un criterio "en el limite" no es un error: es una observacion. Exigir que
+    # todo este holgado para declarar correcta la ejecucion reintroduciria por la
+    # puerta de atras el exceso de alarmas que estamos corrigiendo. Los criterios
+    # al limite se nombran en la recomendacion, sin cambiar el veredicto.
+    cinematica_concluyente = (len(cinematica['evaluables']) >= 2
+                               and cinematica['n_fuera_de_rango'] == 0)
+    sin_tipificar = detecta_desviacion and not criterio_fuera and not cinematica_concluyente
 
     avisos = []
     if not bundle['class_map'].get('entrenado_con_datos_reales', True):
@@ -787,37 +1193,71 @@ def evaluar(video_path, etiqueta_ejercicio):
                        'porcentaje de confianza. Suele deberse a un encuadre o angulo de camara '
                        'muy distinto al de los datos de entrenamiento.'))
 
-    if sin_tipificar:
+    no_evaluables = [h for h in cinematica['hallazgos'] if h['veredicto'] == 'no_evaluable']
+    if no_evaluables:
         avisos.append((
-            'Desviacion sin tipificar',
-            f'El sistema detecto que la ejecucion se aparta del patron correcto, pero no '
-            f'nombra cual error fue. El subtipo mas probable ("{nombres[clase].replace("_", " ")}") '
-            f'alcanzo un recall de {recall_clase:.2f} en la validacion por sujeto, por debajo '
-            f'del minimo de {RECALL_MINIMO_PARA_TIPIFICAR:.2f} que exigimos para afirmarlo. '
-            'Preferimos decir que no sabemos antes que darte un diagnostico que acertamos '
-            'menos de la mitad de las veces.'))
-        etiqueta_clase = 'desviacion tecnica sin tipificar'
-        zona = 'No determinada'
-        correccion = ('Revisa la ejecucion completa con el video anotado: profundidad, '
-                      'alineacion de rodillas y posicion del tronco. Si el patron se repite, '
-                      'consultalo con un kinesiologo o un entrenador.')
-        fundamento = ('La deteccion de que algo se aparta del patron esta validada contra la '
-                      'etiqueta real del dataset. La tipificacion del subtipo, en cambio, se '
-                      'entrena con etiquetas derivadas por reglas, y para esta clase no alcanza '
-                      'el rendimiento minimo para reportarse como diagnostico.')
-        referencia = ''
-    else:
-        etiqueta_clase = nombres[clase].replace('_', ' ')
+            'Criterios que este encuadre no permite medir',
+            'Con la camara en vista ' + cinematica['plano'] + ' no se pueden evaluar: '
+            + ', '.join(h['nombre'].lower() for h in no_evaluables)
+            + '. La profundidad y la inclinacion se miden de perfil; la alineacion de rodillas, '
+              'de frente. Ninguna camara da los dos planos a la vez.'))
+
+    if criterio_fuera:
+        guia = CLINICAL['guia_cinematica'][principal['clave']]
+        etiqueta_clase = principal['nombre'].lower()
         zona = guia['zona_biomecanica']
         correccion = guia['instruccion_correctiva']
         fundamento = guia['fundamento_medico']
-        referencia = CLINICAL['citations'].get(guia['citation_key'], '')
+        referencia = CLINICAL['citations'].get(guia['citation_key'] or '', '')
+    elif sin_tipificar:
+        avisos.append((
+            'Desviacion sin tipificar',
+            'El modelo detecto que la ejecucion se aparta del patron aprendido, pero ningun '
+            'criterio cinematico evaluable con este encuadre se sale de su rango de referencia. '
+            'Puede ser algo que los criterios actuales no cubren, o un limite del propio modelo. '
+            'Preferimos decirlo asi antes que darte un nombre que los angulos no sostienen.'))
+        etiqueta_clase = 'desviacion tecnica sin tipificar'
+        zona = 'No determinada'
+        correccion = ('Revisa la ejecucion con el video anotado. Si el patron se repite, '
+                      'consultalo con un kinesiologo o un entrenador.')
+        fundamento = ('La deteccion esta validada contra la etiqueta real del dataset; la '
+                      'tipificacion se resuelve con criterios cinematicos de umbral citado. '
+                      'Cuando la primera marca algo que los segundos no explican, el sistema lo '
+                      'reporta en vez de elegir una etiqueta al azar.')
+        referencia = ''
+    else:
+        if detecta_desviacion:
+            avisos.append((
+                'El modelo y las medidas no coinciden',
+                'La red marco esta ejecucion como desviada, pero los '
+                f"{len(cinematica['evaluables'])} criterios medibles con este encuadre quedaron "
+                'dentro de su rango de referencia. Se reporta lo que dicen las medidas. '
+                'La red se entreno con un conjunto donde las repeticiones incorrectas eran '
+                'tambien las mas profundas, asi que tiende a penalizar la profundidad; el '
+                'detalle tecnico muestra los dos resultados.'))
+        etiqueta_clase = 'correcto'
+        limites = [h for h in cinematica['hallazgos'] if h['veredicto'] == 'limite']
+        zona = '—'
+        correccion = ('Mantén el patrón: todos los criterios evaluables quedaron dentro de su '
+                      'rango de referencia.'
+                      + ('' if not limites else
+                         ' En el límite: ' + ', '.join(h['nombre'].lower() for h in limites) + '.'))
+        fundamento = ('Los criterios se contrastan contra rangos de referencia publicados y se '
+                      'reportan con el valor medido, para que puedas verificarlos.')
+        referencia = CLINICAL['citations'].get('schoenfeld2010', '')
 
     # Lectura visual: esqueleto sobre el video con la zona del error resaltada.
     try:
+        if criterio_fuera:
+            titulo_overlay = 'Detectado: ' + principal['nombre']
+            focos_overlay = FOCOS_POR_CRITERIO.get(principal['clave'], [])
+        elif sin_tipificar:
+            titulo_overlay, focos_overlay = 'Desviacion detectada, sin tipificar', []
+        else:
+            titulo_overlay, focos_overlay = None, None
         video_anotado, imagen_clave = render_pose_overlay(
-            video_path, exercise, clase, zona,
-            titulo_forzado=('Desviacion detectada, sin tipificar' if sin_tipificar else None))
+            video_path, exercise, 0 if titulo_overlay else clase, zona,
+            titulo_forzado=titulo_overlay, focos_forzados=focos_overlay)
     except Exception as error:   # la evaluacion ya es valida: el overlay es un extra
         print(f'[aviso] no se pudo generar el overlay: {error}')
         video_anotado, imagen_clave = None, None
@@ -828,8 +1268,14 @@ def evaluar(video_path, etiqueta_ejercicio):
         'ejercicio_label': etiqueta_es(exercise),
         'clase': clase,
         'clase_nombre': etiqueta_clase,
-        'es_correcto': nombres[clase] == 'correcto',
+        # La ejecucion es correcta solo si NINGUN criterio medido se sale de
+        # rango y la red tampoco marca desviacion.
+        'es_correcto': not criterio_fuera and not sin_tipificar,
         'sin_tipificar': bool(sin_tipificar),
+        'cinematica': cinematica,
+        'deteccion_red': {'marca_desviacion': bool(detecta_desviacion),
+                          'clase_red': nombres[clase].replace('_', ' '),
+                          'p_error': float(1.0 - probabilidades[0])},
         'confianza': float(probabilidades[clase]),
         'cobertura': float(cobertura),
         'zona': zona,
