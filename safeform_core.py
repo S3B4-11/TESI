@@ -1179,7 +1179,11 @@ def evaluar(video_path, etiqueta_ejercicio):
                                and cinematica['n_fuera_de_rango'] == 0)
     sin_tipificar = detecta_desviacion and not criterio_fuera and not cinematica_concluyente
 
-    avisos = []
+    # Dos canales distintos. `avisos` es lo que el usuario necesita saber para
+    # actuar o para desconfiar del resultado. `avisos_tecnicos` es todo lo demas:
+    # desacuerdos internos y detalles de metodo, que importan para la tesis pero
+    # solo generan ruido y alarma a quien vino a saber si su sentadilla esta bien.
+    avisos, avisos_tecnicos = [], []
     if not bundle['class_map'].get('entrenado_con_datos_reales', True):
         avisos.append(('Modelo de demostracion',
                        'Se entreno con datos sinteticos, no con capturas reales. Sirve para '
@@ -1193,14 +1197,21 @@ def evaluar(video_path, etiqueta_ejercicio):
                        'porcentaje de confianza. Suele deberse a un encuadre o angulo de camara '
                        'muy distinto al de los datos de entrenamiento.'))
 
+    # Que quedo sin medir NO se esconde —seria hacerle creer al usuario que se
+    # reviso todo— pero tampoco va como alarma amarilla: es una linea de texto
+    # bajo el resultado, con la accion concreta para cubrirlo.
     no_evaluables = [h for h in cinematica['hallazgos'] if h['veredicto'] == 'no_evaluable']
+    nota_encuadre = ''
     if no_evaluables:
-        avisos.append((
+        falta = ', '.join(h['nombre'].lower() for h in no_evaluables)
+        otro_plano = 'de frente' if cinematica['plano'] == 'sagital' else 'de perfil'
+        nota_encuadre = (f'Con este encuadre no se evaluo: {falta}. '
+                         f'Para revisarlo, graba {otro_plano}.')
+        avisos_tecnicos.append((
             'Criterios que este encuadre no permite medir',
             'Con la camara en vista ' + cinematica['plano'] + ' no se pueden evaluar: '
-            + ', '.join(h['nombre'].lower() for h in no_evaluables)
-            + '. La profundidad y la inclinacion se miden de perfil; la alineacion de rodillas, '
-              'de frente. Ninguna camara da los dos planos a la vez.'))
+            + falta + '. La profundidad y la inclinacion se miden de perfil; la alineacion '
+            'de rodillas, de frente. Ninguna camara da los dos planos a la vez.'))
 
     if criterio_fuera:
         guia = CLINICAL['guia_cinematica'][principal['clave']]
@@ -1227,7 +1238,7 @@ def evaluar(video_path, etiqueta_ejercicio):
         referencia = ''
     else:
         if detecta_desviacion:
-            avisos.append((
+            avisos_tecnicos.append((
                 'El modelo y las medidas no coinciden',
                 'La red marco esta ejecucion como desviada, pero los '
                 f"{len(cinematica['evaluables'])} criterios medibles con este encuadre quedaron "
@@ -1290,6 +1301,8 @@ def evaluar(video_path, etiqueta_ejercicio):
         'reparto': {nombres[i].replace('_', ' '): float(pr)
                     for i, pr in enumerate(probabilidades)},
         'avisos': avisos,
+        'avisos_tecnicos': avisos_tecnicos,
+        'nota_encuadre': nota_encuadre,
         'metricas': metricas_modelo or None,
         'vista': info_vista,
         'imagen': imagen_clave,
@@ -1329,6 +1342,8 @@ def analizar(video_path, etiqueta_ejercicio):
                   f"**Por que importa:** {r['fundamento']}\n")
     if r['referencia']:
         cuerpo += f"\n**Referencia:** {r['referencia']}\n"
+    if r.get('nota_encuadre'):
+        cuerpo += f"\n*{r['nota_encuadre']}*\n"
     for titulo_aviso, detalle in r['avisos']:
         cuerpo += f"\n> **{titulo_aviso}:** {detalle}\n"
     m = r['metricas']

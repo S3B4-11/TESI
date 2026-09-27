@@ -118,6 +118,11 @@ with derecha:
     m2.metric('Cobertura de postura', f"{r['cobertura'] * 100:.0f} %",
               help='Porcentaje de fotogramas en que se detectó el cuerpo.')
 
+    if r.get('nota_encuadre'):
+        st.caption(r['nota_encuadre'])
+
+    # Solo los avisos de USUARIO salen destacados. Los tecnicos viven en su
+    # pestana: el usuario vino a saber si su ejecucion esta bien y que corregir.
     for titulo_aviso, detalle in r['avisos']:
         st.warning(f'**{titulo_aviso}.** {detalle}')
 
@@ -175,6 +180,10 @@ with derecha:
                 + f" (probabilidad de error {red['p_error']:.0%}"
                 + (f", subtipo más probable: {red['clase_red']}" if red['marca_desviacion'] else '')
                 + '). El modelo decide si hay desviación; los criterios de arriba dicen cuál.')
+
+        for titulo_aviso, detalle in r.get('avisos_tecnicos', []):
+            st.markdown(f'**{titulo_aviso}**')
+            st.caption(detalle)
 
         st.markdown('**Probabilidad por clase**')
         for nombre, valor in sorted(r['reparto'].items(), key=lambda x: -x[1]):
