@@ -105,8 +105,16 @@ with derecha:
         '<div class="titulo">' + titulo_estado + '</div></div>',
         unsafe_allow_html=True)
 
+    cine_resumen = r.get('cinematica') or {}
     m1, m2 = st.columns(2)
-    m1.metric('Confianza', f"{r['confianza'] * 100:.1f} %")
+    if cine_resumen.get('evaluables'):
+        _total = len(cine_resumen['evaluables'])
+        _ok = _total - cine_resumen['n_fuera_de_rango']
+        m1.metric('Criterios en rango', f'{_ok} de {_total}',
+                  help='Criterios cinemáticos que este encuadre permitió medir. '
+                       'El porcentaje de confianza del modelo está en el detalle técnico.')
+    else:
+        m1.metric('Confianza del modelo', f"{r['confianza'] * 100:.1f} %")
     m2.metric('Cobertura de postura', f"{r['cobertura'] * 100:.0f} %",
               help='Porcentaje de fotogramas en que se detectó el cuerpo.')
 

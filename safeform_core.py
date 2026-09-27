@@ -1255,8 +1255,13 @@ def evaluar(video_path, etiqueta_ejercicio):
             titulo_overlay, focos_overlay = 'Desviacion detectada, sin tipificar', []
         else:
             titulo_overlay, focos_overlay = None, None
+        # SIEMPRE clase 0: el cartel del video lo decide el veredicto final, no
+        # la clase que devolvio la red. Pasar `clase` aqui hacia que el overlay
+        # anunciara "inclinacion lumbar excesiva" sobre una ejecucion que el
+        # sistema acababa de declarar correcta. Con clase 0 y sin titulo forzado
+        # el overlay dice "Ejecucion correcta" y no resalta ninguna zona.
         video_anotado, imagen_clave = render_pose_overlay(
-            video_path, exercise, 0 if titulo_overlay else clase, zona,
+            video_path, exercise, 0, zona,
             titulo_forzado=titulo_overlay, focos_forzados=focos_overlay)
     except Exception as error:   # la evaluacion ya es valida: el overlay es un extra
         print(f'[aviso] no se pudo generar el overlay: {error}')
