@@ -179,6 +179,11 @@ VISIBILIDAD_MINIMA = 0.5
 # usuario no tiene forma de saber cual de las dos veces le toco.
 RECALL_MINIMO_PARA_TIPIFICAR = 0.40
 
+# El video anotado completo se reemplazo por la foto del instante evaluado: es
+# el fotograma donde se tomaron las medidas, y es lo unico que aporta evidencia.
+# Ponlo en True si necesitas el video para una demostracion.
+GENERAR_VIDEO_ANOTADO = False
+
 # Que articulaciones resaltar segun el criterio cinematico que se salio de rango.
 # Antes se indexaba por la clase que devolvia la red; ahora por la medida que
 # efectivamente falló, que es lo que el usuario necesita mirar.
@@ -483,6 +488,7 @@ def criterios_de_sentadilla(medidas, plano):
                                  mayor_es_peor=False)),
         'lectura': f'Clasificación: sentadilla {categoria}.',
         'plano': 'sagital', 'fuente': 'schoenfeld2010',
+        'escala': [0.0, 140.0], 'banda': [FLEXION_RODILLA_MEDIA, 140.0],
     })
 
     # 2. Paralelismo tronco-tibia. Criterio RELATIVO: se ajusta solo a la
@@ -499,6 +505,7 @@ def criterios_de_sentadilla(medidas, plano):
         'lectura': (f"Tronco {medidas['inclinacion_tronco']:.0f}° y tibia "
                     f"{medidas['inclinacion_tibia']:.0f}° respecto de la vertical."),
         'plano': 'sagital', 'fuente': 'kritz2009',
+        'escala': [0.0, 45.0], 'banda': [0.0, PARALELISMO_EN_RANGO],
     })
 
     # 3. Valgo. Plano frontal: solo se evalúa si la cámara lo permite.
@@ -512,6 +519,7 @@ def criterios_de_sentadilla(medidas, plano):
         'lectura': ('' if frontal else
                     'El valgo es una medida del plano frontal: hace falta grabar de frente.'),
         'plano': 'frontal', 'fuente': 'hewett2005',
+        'escala': [0.0, 0.35], 'banda': [0.0, VALGO_EN_RANGO],
     })
 
     # 4. Simetría entre piernas.
@@ -526,6 +534,7 @@ def criterios_de_sentadilla(medidas, plano):
         'lectura': (f"Izquierda {medidas['flexion_rodilla_izq']:.0f}°, "
                     f"derecha {medidas['flexion_rodilla_der']:.0f}°."),
         'plano': 'frontal', 'fuente': None,
+        'escala': [0.0, 30.0], 'banda': [0.0, ASIMETRIA_EN_RANGO],
     })
     return hallazgos
 
@@ -542,6 +551,7 @@ def criterios_de_brazo(medidas, plano, ejercicio):
             'veredicto': _veredicto(valor, ABDUCCION_COMPLETA, ABDUCCION_LIMITE,
                                      mayor_es_peor=False),
             'lectura': '', 'plano': 'frontal', 'fuente': None,
+            'escala': [0.0, 180.0], 'banda': [ABDUCCION_COMPLETA, 180.0],
         })
     else:
         valor = medidas['flexion_codo_max']
@@ -553,6 +563,7 @@ def criterios_de_brazo(medidas, plano, ejercicio):
             'veredicto': _veredicto(valor, FLEXION_CODO_COMPLETA, FLEXION_CODO_LIMITE,
                                      mayor_es_peor=False),
             'lectura': '', 'plano': 'sagital', 'fuente': None,
+            'escala': [0.0, 160.0], 'banda': [FLEXION_CODO_COMPLETA, 160.0],
         })
     compensacion = medidas['inclinacion_tronco_max']
     hallazgos.append({
@@ -565,6 +576,7 @@ def criterios_de_brazo(medidas, plano, ejercicio):
         'lectura': 'Balancear el tronco para ayudar al brazo desplaza el trabajo '
                    'fuera del músculo objetivo.',
         'plano': 'sagital', 'fuente': None,
+        'escala': [0.0, 45.0], 'banda': [0.0, COMPENSACION_TRONCO_EN_RANGO],
     })
     return hallazgos
 
@@ -919,7 +931,8 @@ def _a_h264(entrada):
 
 
 def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
-                         lado_maximo=720, titulo_forzado=None, focos_forzados=None):
+                         lado_maximo=720, titulo_forzado=None, focos_forzados=None,
+                         generar_video=False):
     """Video con el esqueleto dibujado y la region del error resaltada, mas la
     imagen del instante mas critico del movimiento.
 
@@ -963,9 +976,13 @@ def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
                else np.linspace(0, max(total - 1, 0), max_frames).round().astype(int))
     fps_salida = fps if 0 < total <= max_frames else max(1.0, fps * len(indices) / max(total, 1))
 
+    # Por defecto NO se genera el video anotado. Dura unos segundos y no deja
+    # medir nada: el instante donde se tomaron las medidas es UNO solo, y esa
+    # foto es la evidencia. Saltarlo ahorra la escritura del mp4 y la
+    # recodificacion a H.264, que era el paso mas lento y el que agotaba memoria.
     ruta_video = salida_dir / 'analisis_esqueleto.mp4'
-    escritor = cv2.VideoWriter(str(ruta_video), cv2.VideoWriter_fourcc(*'mp4v'),
-                                fps_salida, (ancho, alto))
+    escritor = (cv2.VideoWriter(str(ruta_video), cv2.VideoWriter_fourcc(*'mp4v'),
+                                 fps_salida, (ancho, alto)) if generar_video else None)
     detector = get_pose_detector()
 
     def preparar(bruto):
@@ -986,12 +1003,15 @@ def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
             mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
         puntos = _landmarks_a_pixeles(resultado_pose, ancho, alto)
         if puntos is None:
-            escritor.write(_escribir_banner(frame, titulo, subtitulo, es_correcto))
+            if escritor is not None:
+                escritor.write(_escribir_banner(frame, titulo, subtitulo, es_correcto))
             continue
-        escritor.write(anotar(frame, puntos))
+        if escritor is not None:
+            escritor.write(anotar(frame, puntos))
         puntos_por_frame.append(puntos)
         indices_con_pose.append(int(indice))
-    escritor.release()
+    if escritor is not None:
+        escritor.release()
 
     # Instante clave: se elige con los puntos (baratos) y se vuelve a leer solo
     # ese fotograma del video, en vez de haberlos guardado todos.
@@ -1007,7 +1027,7 @@ def render_pose_overlay(video_path, exercise, class_id, zona, max_frames=150,
     if clave is None:
         clave = np.zeros((alto, ancho, 3), dtype=np.uint8)
     cv2.imwrite(str(ruta_imagen), clave)
-    return str(_a_h264(ruta_video)), str(ruta_imagen)
+    return (str(_a_h264(ruta_video)) if escritor is not None else None), str(ruta_imagen)
 
 
 # ---------------- Modelos y motor clinico ----------------
@@ -1273,7 +1293,8 @@ def evaluar(video_path, etiqueta_ejercicio):
         # el overlay dice "Ejecucion correcta" y no resalta ninguna zona.
         video_anotado, imagen_clave = render_pose_overlay(
             video_path, exercise, 0, zona,
-            titulo_forzado=titulo_overlay, focos_forzados=focos_overlay)
+            titulo_forzado=titulo_overlay, focos_forzados=focos_overlay,
+            generar_video=GENERAR_VIDEO_ANOTADO)
     except Exception as error:   # la evaluacion ya es valida: el overlay es un extra
         print(f'[aviso] no se pudo generar el overlay: {error}')
         video_anotado, imagen_clave = None, None
