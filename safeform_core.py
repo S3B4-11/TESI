@@ -294,6 +294,29 @@ FLEXION_CODO_LIMITE = 95.0
 # Confianza mínima del azimut para creerle al plano estimado.
 CONFIANZA_VISTA_MINIMA = 0.25
 
+# MARGEN POR VISTA NO ÓPTIMA. Medido, no supuesto: se degradó el esqueleto con
+# el modelo de ruido de MediaPipe de la sección 2.0.d (sigma 0,02 en X/Y, x3 en
+# Z) y se midió cada criterio desde 0° (frente) hasta 88° (perfil).
+#
+#   medida                real     de frente      45°      de perfil
+#   flexión de codo      135,00°     ±4,9°       ±5,9°       ±8,1°
+#   abducción de hombro  165,00°     ±7,3°       ±6,3°       ±9,6°
+#   inclinación tronco    35,00°     ±5,0°       ±5,3°       ±4,7°
+#   flexión de rodilla    95,00°     ±4,0°       ±3,9°       ±3,0°
+#   valgo                  0,40      ±0,09       ±0,16       ±0,21
+#   (error absoluto al percentil 90 sobre 60 repeticiones)
+#
+# La conclusión desmiente la analogía con la que se había cerrado el brazo: los
+# ÁNGULOS ARTICULARES se miden bien desde cualquier azimut —la canonicalización
+# ya quitó la rotación— y solo el VALGO se derrumba fuera del plano frontal,
+# porque es un desplazamiento lateral, no un ángulo entre segmentos.
+#
+# Así que el plano dejó de ser una puerta cerrada para casi todo: los criterios
+# se miden igual y, cuando la cámara no está en su plano óptimo, se les exige
+# este margen extra antes de llamarlos error. Un valor apenas pasado del umbral
+# medido en la peor vista cae dentro del ruido; uno claramente pasado, no.
+MARGEN_VISTA_NO_OPTIMA = 5.0
+
 
 def _angulo_articular(a, vertice, c):
     """Ángulo (grados) en `vertice` entre los segmentos vertice->a y vertice->c."""
@@ -474,12 +497,19 @@ def medidas_de_brazo(coords, indice=None):
     }
 
 
-def _veredicto(valor, en_rango, limite, mayor_es_peor=True):
-    """Clasifica un valor en tres bandas en vez de un corte binario."""
+def _veredicto(valor, en_rango, limite, mayor_es_peor=True, margen=0.0):
+    """Clasifica un valor en tres bandas en vez de un corte binario.
+
+    `margen` desplaza los dos umbrales hacia el lado indulgente. Se usa cuando
+    la cámara no está en el plano óptimo del criterio: la medida sigue siendo
+    válida, pero su incertidumbre es mayor y no corresponde acusar con ella.
+    """
     if mayor_es_peor:
+        en_rango, limite = en_rango + margen, limite + margen
         if valor <= en_rango:
             return 'en_rango'
         return 'limite' if valor <= limite else 'fuera_de_rango'
+    en_rango, limite = en_rango - margen, limite - margen
     if valor >= en_rango:
         return 'en_rango'
     return 'limite' if valor >= limite else 'fuera_de_rango'
@@ -504,6 +534,11 @@ def criterios_de_sentadilla(medidas, plano):
     encuadre permitía evaluarlo."""
     sagital = plano in ('sagital', 'oblicuo')
     frontal = plano in ('frontal', 'oblicuo')
+    # Los ángulos articulares se miden desde cualquier azimut; solo cuestan un
+    # margen extra fuera de su plano óptimo. El valgo y la simetría sí exigen la
+    # vista frontal: el primero es un desplazamiento lateral y el segundo
+    # necesita distinguir las dos piernas, que de perfil se superponen.
+    margen_sagital = 0.0 if sagital else MARGEN_VISTA_NO_OPTIMA
     hallazgos = []
 
     # 1. Profundidad. La sentadilla profunda NO es un error: solo se marca la
@@ -521,10 +556,10 @@ def criterios_de_sentadilla(medidas, plano):
         'valor': round(flexion, 1), 'unidad': '° de flexión de rodilla',
         'referencia': f'>= {FLEXION_RODILLA_MEDIA:.0f}° para alcanzar el rango medio; '
                       f'> {FLEXION_RODILLA_PROFUNDA:.0f}° es sentadilla profunda',
-        'veredicto': ('no_evaluable' if not sagital else
-                      _veredicto(flexion, FLEXION_RODILLA_MEDIA,
-                                 FLEXION_RODILLA_MEDIA - TOLERANCIA_PROFUNDIDAD,
-                                 mayor_es_peor=False)),
+        'veredicto': _veredicto(flexion, FLEXION_RODILLA_MEDIA,
+                                FLEXION_RODILLA_MEDIA - TOLERANCIA_PROFUNDIDAD,
+                                mayor_es_peor=False, margen=margen_sagital),
+        'fuera_de_plano': not sagital,
         'lectura': f'Clasificación: sentadilla {categoria}.',
         'plano': 'sagital', 'fuente': 'schoenfeld2010',
         'escala': [0.0, 140.0], 'banda': [FLEXION_RODILLA_MEDIA, 140.0],
@@ -540,8 +575,9 @@ def criterios_de_sentadilla(medidas, plano):
         'nombre': 'Alineación del tronco con la tibia',
         'valor': round(desalineacion, 1), 'unidad': '° de diferencia',
         'referencia': f'<= {PARALELISMO_EN_RANGO:.0f}° (tronco y tibia aproximadamente paralelos)',
-        'veredicto': ('no_evaluable' if not sagital else
-                      _veredicto(desalineacion, PARALELISMO_EN_RANGO, PARALELISMO_LIMITE)),
+        'veredicto': _veredicto(desalineacion, PARALELISMO_EN_RANGO, PARALELISMO_LIMITE,
+                                margen=margen_sagital),
+        'fuera_de_plano': not sagital,
         'lectura': (f"Tronco {medidas['inclinacion_tronco']:.0f}° y tibia "
                     f"{medidas['inclinacion_tibia']:.0f}° respecto de la vertical."),
         'plano': 'sagital', 'fuente': 'kritz2009',
@@ -559,6 +595,7 @@ def criterios_de_sentadilla(medidas, plano):
                       _veredicto(medidas['valgo'], VALGO_EN_RANGO, VALGO_LIMITE)),
         'lectura': ('' if frontal else
                     'El valgo es una medida del plano frontal: hace falta grabar de frente.'),
+        'exige_plano': True,
         'plano': 'frontal', 'fuente': 'hewett2005',
         'escala': [0.0, 0.35], 'banda': [0.0, VALGO_EN_RANGO],
         'maximo_plausible': TOPE_VALGO,
@@ -575,6 +612,7 @@ def criterios_de_sentadilla(medidas, plano):
                                  ASIMETRIA_LIMITE)),
         'lectura': (f"Izquierda {medidas['flexion_rodilla_izq']:.0f}°, "
                     f"derecha {medidas['flexion_rodilla_der']:.0f}°."),
+        'exige_plano': True,
         'plano': 'frontal', 'fuente': None,
         'escala': [0.0, 30.0], 'banda': [0.0, ASIMETRIA_EN_RANGO],
         'maximo_plausible': TOPE_ASIMETRIA,
@@ -585,6 +623,8 @@ def criterios_de_sentadilla(medidas, plano):
 def criterios_de_brazo(medidas, plano, ejercicio):
     sagital = plano in ('sagital', 'oblicuo')
     frontal = plano in ('frontal', 'oblicuo')
+    margen_sagital = 0.0 if sagital else MARGEN_VISTA_NO_OPTIMA
+    margen_frontal = 0.0 if frontal else MARGEN_VISTA_NO_OPTIMA
     hallazgos = []
     if ejercicio == 'shoulder_abduction':
         valor = medidas['abduccion_max']
@@ -593,9 +633,9 @@ def criterios_de_brazo(medidas, plano, ejercicio):
             'nombre': 'Amplitud de la abducción',
             'valor': round(valor, 1), 'unidad': '° desde el brazo colgando',
             'referencia': f'>= {ABDUCCION_COMPLETA:.0f}° para el recorrido completo',
-            'veredicto': ('no_evaluable' if not frontal else
-                          _veredicto(valor, ABDUCCION_COMPLETA, ABDUCCION_LIMITE,
-                                     mayor_es_peor=False)),
+            'veredicto': _veredicto(valor, ABDUCCION_COMPLETA, ABDUCCION_LIMITE,
+                                    mayor_es_peor=False, margen=margen_frontal),
+            'fuera_de_plano': not frontal,
             'lectura': '', 'plano': 'frontal', 'fuente': None,
             'principal_del_ejercicio': True,
             'escala': [0.0, 180.0], 'banda': [ABDUCCION_COMPLETA, 180.0],
@@ -608,9 +648,9 @@ def criterios_de_brazo(medidas, plano, ejercicio):
             'nombre': 'Amplitud de la flexión de codo',
             'valor': round(valor, 1), 'unidad': '° de flexión',
             'referencia': f'>= {FLEXION_CODO_COMPLETA:.0f}° para el recorrido completo',
-            'veredicto': ('no_evaluable' if not sagital else
-                          _veredicto(valor, FLEXION_CODO_COMPLETA, FLEXION_CODO_LIMITE,
-                                     mayor_es_peor=False)),
+            'veredicto': _veredicto(valor, FLEXION_CODO_COMPLETA, FLEXION_CODO_LIMITE,
+                                    mayor_es_peor=False, margen=margen_sagital),
+            'fuera_de_plano': not sagital,
             'lectura': '', 'plano': 'sagital', 'fuente': None,
             'principal_del_ejercicio': True,
             'escala': [0.0, 160.0], 'banda': [FLEXION_CODO_COMPLETA, 160.0],
@@ -622,9 +662,9 @@ def criterios_de_brazo(medidas, plano, ejercicio):
         'nombre': 'Estabilidad del tronco',
         'valor': round(compensacion, 1), 'unidad': '° respecto de la vertical',
         'referencia': f'<= {COMPENSACION_TRONCO_EN_RANGO:.0f}°',
-        'veredicto': ('no_evaluable' if not sagital else
-                      _veredicto(compensacion, COMPENSACION_TRONCO_EN_RANGO,
-                                 COMPENSACION_TRONCO_LIMITE)),
+        'veredicto': _veredicto(compensacion, COMPENSACION_TRONCO_EN_RANGO,
+                                COMPENSACION_TRONCO_LIMITE, margen=margen_sagital),
+        'fuera_de_plano': not sagital,
         'lectura': 'Balancear el tronco para ayudar al brazo desplaza el trabajo '
                    'fuera del músculo objetivo.',
         'plano': 'sagital', 'fuente': None,
@@ -647,6 +687,7 @@ def evaluar_cinematica(secuencia, ejercicio, info_vista=None):
         return {'plano': 'indeterminado', 'motivo_plano': motivo, 'medidas': {},
                 'hallazgos': [], 'principal': None, 'n_fuera_de_rango': 0, 'n_limite': 0,
                 'evaluables': [], 'no_evaluables': [], 'implausibles': [],
+                'fuera_de_plano': [],
                 'criterio_principal': None,
                 'criterio_principal_medido': False, 'postura_utilizable': False}
     if ejercicio in EJERCICIOS_DE_PIERNA:
@@ -656,6 +697,8 @@ def evaluar_cinematica(secuencia, ejercicio, info_vista=None):
         medidas = medidas_de_brazo(coords)
         hallazgos = criterios_de_brazo(medidas, vista['plano'], ejercicio)
     for h in hallazgos:
+        h.setdefault('fuera_de_plano', False)
+        h.setdefault('exige_plano', False)
         h.setdefault('motivo_no_evaluable', 'encuadre' if h['veredicto'] == 'no_evaluable' else '')
     hallazgos = _descartar_implausibles(hallazgos)
 
@@ -672,6 +715,8 @@ def evaluar_cinematica(secuencia, ejercicio, info_vista=None):
         'no_evaluables': [h['clave'] for h in hallazgos if h['veredicto'] == 'no_evaluable'],
         'implausibles': [h['clave'] for h in hallazgos
                          if h.get('motivo_no_evaluable') == 'implausible'],
+        'fuera_de_plano': [h['clave'] for h in hallazgos
+                           if h.get('fuera_de_plano') and h['veredicto'] != 'no_evaluable'],
         'criterio_principal': next((h['clave'] for h in hallazgos
                                     if h.get('principal_del_ejercicio')), None),
         'criterio_principal_medido': any(h.get('principal_del_ejercicio')

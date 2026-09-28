@@ -150,6 +150,12 @@ def dibujar_criterio(h):
                  + encuadre + '.') if encuadre else 'Este encuadre no permite medirlo.'
     else:
         pista = h.get('lectura') or ''
+        if h.get('fuera_de_plano'):
+            # Se midió igual, pero con más incertidumbre: decirlo es parte del
+            # resultado, y explica por qué el umbral fue más indulgente.
+            pista = (pista + ' ' if pista else '') + (
+                'Medido fuera de su plano óptimo: se exigió un margen extra antes de '
+                'marcarlo como error.')
     aguja = ('' if estado == 'no_evaluable'
              else f'<div class="aguja" style="left:{posicion(h["valor"], escala):.1f}%"></div>')
     st.markdown(
